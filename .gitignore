@@ -7,6 +7,18 @@
 *.dll
 *.so
 *.dylib
+.DS_Store
+.gocache
+.gotmp
+.gopath
+.gomodcache
+.tmp
+python
+tests/_bin
+tests/_logs
+.rs*
+config
+storage
 
 # Test binary, built with `go test -c`
 *.test

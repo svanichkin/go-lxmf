@@ -9,6 +9,7 @@
 *.dylib
 .DS_Store
 .gocache
+.cache
 .gotmp
 .gopath
 .gomodcache
@@ -19,6 +20,10 @@ tests/_logs
 .rs*
 config
 storage
+*.log
+*.norm
+*.raw
+tests
 
 # Test binary, built with `go test -c`
 *.test

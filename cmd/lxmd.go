@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -675,7 +675,7 @@ func remoteInit(configDir, rnsConfigDir, identityFile string, verbosity, quietne
 	}
 
 	level := targetLogLevel + verbosity - quietness
-	var logDest any = rns.LOG_STDOUT
+	var logDest any = func(int, string) {}
 	if _, err := rns.NewReticulum(ptrOrNil(rnsConfigDir), &level, logDest, nil, true, nil); err != nil {
 		return fmt.Errorf("could not start Reticulum: %w", err)
 	}
@@ -721,33 +721,10 @@ func getRemoteIdentity(remote string, timeout float64) (*rns.Identity, error) {
 	return nil, errors.New("could not recall remote identity")
 }
 
-func ensureRemotePath(hash []byte, timeout float64) error {
-	if hash == nil || len(hash) == 0 {
-		return errors.New("empty destination hash for path request")
-	}
-	if rns.TransportHasPath(hash) {
-		return nil
-	}
-	rns.TransportRequestPath(hash)
-	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	for time.Now().Before(deadline) {
-		if rns.TransportHasPath(hash) {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return errors.New("transport path request timed out")
-}
-
 func controlRequest(remote *rns.Identity, path string, data any, timeout float64) (any, error) {
 	dest, err := rns.NewDestination(remote, rns.DestinationOUT, rns.DestinationSINGLE, lxmf.AppName, "propagation", "control")
 	if err != nil {
 		return nil, err
-	}
-	if identity == nil || remote == nil || !bytes.Equal(remote.Hash, identity.Hash) {
-		if err := ensureRemotePath(dest.Hash(), timeout); err != nil {
-			return nil, err
-		}
 	}
 	link, err := rns.NewOutgoingLink(dest, rns.LinkModeDefault, nil, nil)
 	if err != nil {
@@ -821,7 +798,7 @@ func printStatusResponse(remote string, showStatus, showPeers bool, timeout floa
 	}
 	stats := convertStatsMap(rawMap)
 
-	fmt.Printf("\nLXMF Propagation Node running on %v, uptime is %v\n", stats["destination_hash"], stats["uptime"])
+	fmt.Printf("\nLXMF Propagation Node running on %v, uptime is %v\n", stats["destination_hash"], rns.PrettyTime(float64(toInt(stats["uptime"])), false, false))
 	if showStatus {
 		if ms, ok := stats["messagestore"].(map[string]any); ok {
 			bytes := toInt(ms["bytes"])
@@ -835,20 +812,82 @@ func printStatusResponse(remote string, showStatus, showPeers bool, timeout floa
 		}
 		fmt.Printf("Required propagation stamp cost is %v, flexibility is %v\n", stats["target_stamp_cost"], stats["stamp_cost_flexibility"])
 		fmt.Printf("Peering cost is %v, max remote peering cost is %v\n", stats["peering_cost"], stats["max_peering_cost"])
-		fmt.Printf("Accepting propagated messages from %v nodes\n", stats["from_static_only"])
+		if fromStaticOnly, ok := stats["from_static_only"].(bool); ok && fromStaticOnly {
+			fmt.Printf("Accepting propagated messages from static peers only\n")
+		} else {
+			fmt.Printf("Accepting propagated messages from all nodes\n")
+		}
 		fmt.Printf("%s message limit, %s sync limit\n", rns.PrettySize(float64(toInt(stats["propagation_limit"])*1000)), rns.PrettySize(float64(toInt(stats["sync_limit"])*1000)))
+
+		peersMap, _ := stats["peers"].(map[string]any)
+		totalPeers := toInt(stats["total_peers"])
+		maxPeers := toInt(stats["max_peers"])
+		discoveredPeers := toInt(stats["discovered_peers"])
+		staticPeers := toInt(stats["static_peers"])
+
+		availablePeers := 0
+		unreachablePeers := 0
+		peeredIncoming := 0
+		peeredOutgoing := 0
+		peeredRxBytes := 0
+		peeredTxBytes := 0
+		for _, entry := range peersMap {
+			pm, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if alive, ok := pm["alive"].(bool); ok && alive {
+				availablePeers++
+			} else {
+				unreachablePeers++
+			}
+			msgs, _ := pm["messages"].(map[string]any)
+			peeredIncoming += toInt(msgs["incoming"])
+			peeredOutgoing += toInt(msgs["outgoing"])
+			peeredRxBytes += toInt(pm["rx_bytes"])
+			peeredTxBytes += toInt(pm["tx_bytes"])
+		}
+
+		fmt.Printf("\nPeers   : %d total (peer limit is %d)\n", totalPeers, maxPeers)
+		fmt.Printf("          %d discovered, %d static\n", discoveredPeers, staticPeers)
+		fmt.Printf("          %d available, %d unreachable\n", availablePeers, unreachablePeers)
+
+		unpeeredIncoming := toInt(stats["unpeered_propagation_incoming"])
+		unpeeredRxBytes := toInt(stats["unpeered_propagation_rx_bytes"])
+		clients, _ := stats["clients"].(map[string]any)
+		clientPropagationReceived := toInt(clients["client_propagation_messages_received"])
+		clientPropagationServed := toInt(clients["client_propagation_messages_served"])
+
+		totalIncoming := peeredIncoming + unpeeredIncoming + clientPropagationReceived
+		totalRxBytes := peeredRxBytes + unpeeredRxBytes
+		df := any(0)
+		if totalIncoming != 0 {
+			raw := float64(peeredOutgoing) / float64(totalIncoming)
+			df = math.Round(raw*100) / 100
+		}
+
+		fmt.Printf("\nTraffic : %d messages received in total (%s)\n", totalIncoming, rns.PrettySize(float64(totalRxBytes)))
+		fmt.Printf("          %d messages received from peered nodes (%s)\n", peeredIncoming, rns.PrettySize(float64(peeredRxBytes)))
+		fmt.Printf("          %d messages received from unpeered nodes (%s)\n", unpeeredIncoming, rns.PrettySize(float64(unpeeredRxBytes)))
+		fmt.Printf("          %d messages transferred to peered nodes (%s)\n", peeredOutgoing, rns.PrettySize(float64(peeredTxBytes)))
+		fmt.Printf("          %d propagation messages received directly from clients\n", clientPropagationReceived)
+		fmt.Printf("          %d propagation messages served to clients\n", clientPropagationServed)
+		fmt.Printf("          Distribution factor is %v\n", df)
+		fmt.Println("")
 	}
 	if showPeers {
-		if peers, ok := stats["peers"].(map[string]any); ok {
-			fmt.Println("Peers:")
-			for id, entry := range peers {
-				if peerMap, ok := entry.(map[string]any); ok {
-					status := "Unavailable"
-					if alive, ok := peerMap["alive"].(bool); ok && alive {
-						status = "Available"
-					}
-					fmt.Printf("  %s: %s (%v)\n", id, peerMap["type"], status)
+		// Python prints a blank line before the peer list (even if no peers exist) when show_status is false.
+		if !showStatus {
+			fmt.Println("")
+		}
+		if peers, ok := stats["peers"].(map[string]any); ok && len(peers) > 0 {
+			for _, entry := range peers {
+				peerMap, ok := entry.(map[string]any)
+				if !ok {
+					continue
 				}
+				_ = peerMap
+				// Detailed per-peer output parity is implemented later.
 			}
 		}
 	}

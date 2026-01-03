@@ -1019,6 +1019,8 @@ func (r *LXMRouter) EnablePropagation() error {
 		_ = r.ControlDestination.RegisterRequestHandler(StatsGetPath, r.StatsGetRequest, rns.DestinationAllowList, allowed)
 		_ = r.ControlDestination.RegisterRequestHandler(SyncRequestPath, r.PeerSyncRequest, rns.DestinationAllowList, allowed)
 		_ = r.ControlDestination.RegisterRequestHandler(UnpeerRequestPath, r.PeerUnpeerRequest, rns.DestinationAllowList, allowed)
+		// Ensure local and remote clients can resolve a path to the control destination.
+		r.ControlDestination.Announce(nil, false, nil, nil, true)
 	}
 
 	if r.MessageStorageLimit != nil {
@@ -2019,7 +2021,7 @@ func (r *LXMRouter) CompileStats() map[any]any {
 			"target_stamp_cost":      peer.PropagationStampCost,
 			"stamp_cost_flexibility": peer.PropagationStampCostFlexibility,
 			"peering_cost":           peer.PeeringCost,
-			"peering_key":            peer.PeeringKeyValue(),
+			"peering_key":            derefInt(peer.PeeringKeyValue()),
 			"network_distance":       rns.TransportHopsTo([]byte(peerID)),
 			"rx_bytes":               peer.RxBytes,
 			"tx_bytes":               peer.TxBytes,
@@ -2049,7 +2051,7 @@ func (r *LXMRouter) CompileStats() map[any]any {
 		"messagestore": map[string]any{
 			"count": len(r.PropagationEntries),
 			"bytes": r.MessageStorageSize(),
-			"limit": r.MessageStorageLimit,
+			"limit": derefInt(r.MessageStorageLimit),
 		},
 		"clients": map[string]any{
 			"client_propagation_messages_received": r.ClientPropagationMessagesReceived,
@@ -2065,6 +2067,13 @@ func (r *LXMRouter) CompileStats() map[any]any {
 	}
 
 	return nodeStats
+}
+
+func derefInt(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 func (r *LXMRouter) StatsGetRequest(_ string, _ any, _ []byte, _ []byte, remoteIdentity *rns.Identity, _ time.Time) any {

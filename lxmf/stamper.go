@@ -23,7 +23,8 @@ const (
 )
 
 type stampJob struct {
-	cancel chan struct{}
+	cancel     chan struct{}
+	cancelOnce sync.Once
 }
 
 var (
@@ -175,7 +176,11 @@ func GenerateStamp(messageID []byte, stampCost int, expandRounds int) ([]byte, i
 
 	switch runtime.GOOS {
 	case "windows", "darwin", "android":
-		stamp, rounds = jobSimple(stampCost, workblock, messageID)
+		if runtime.GOOS == "android" {
+			stamp, rounds = jobAndroid(stampCost, workblock, messageID)
+		} else {
+			stamp, rounds = jobSimple(stampCost, workblock, messageID)
+		}
 	default:
 		stamp, rounds = jobConcurrent(stampCost, workblock, messageID)
 	}
@@ -197,7 +202,7 @@ func CancelWork(messageID []byte) {
 	activeJobsMu.Lock()
 	job := activeJobs[key]
 	if job != nil {
-		close(job.cancel)
+		job.cancelOnce.Do(func() { close(job.cancel) })
 		delete(activeJobs, key)
 	}
 	activeJobsMu.Unlock()
@@ -285,7 +290,7 @@ func jobConcurrent(stampCost int, workblock []byte, messageID []byte) ([]byte, i
 
 		select {
 		case resultCh <- pstamp:
-			close(job.cancel)
+			job.cancelOnce.Do(func() { close(job.cancel) })
 		default:
 		}
 		roundsCh <- rounds
@@ -297,11 +302,95 @@ func jobConcurrent(stampCost int, workblock []byte, messageID []byte) ([]byte, i
 		go worker()
 	}
 
-	stamp = <-resultCh
+	select {
+	case stamp = <-resultCh:
+	case <-job.cancel:
+		stamp = nil
+	}
 	wg.Wait()
 	close(roundsCh)
 	for rounds := range roundsCh {
 		totalRounds += rounds
+	}
+
+	activeJobsMu.Lock()
+	delete(activeJobs, key)
+	activeJobsMu.Unlock()
+
+	return stamp, totalRounds
+}
+
+func jobAndroid(stampCost int, workblock []byte, messageID []byte) ([]byte, int) {
+	stamp := []byte(nil)
+	start := time.Now()
+	totalRounds := 0
+	roundsPerWorker := 1000
+	jobs := runtime.NumCPU()
+	if jobs < 1 {
+		jobs = 1
+	}
+
+	job := &stampJob{cancel: make(chan struct{})}
+	key := string(messageID)
+	activeJobsMu.Lock()
+	activeJobs[key] = job
+	activeJobsMu.Unlock()
+
+	for stamp == nil {
+		var (
+			wg     sync.WaitGroup
+			mu     sync.Mutex
+			found  []byte
+			rounds int
+		)
+		wg.Add(jobs)
+		for i := 0; i < jobs; i++ {
+			go func() {
+				defer wg.Done()
+				pstamp := make([]byte, 256/8)
+				for n := 0; n < roundsPerWorker; n++ {
+					select {
+					case <-job.cancel:
+						return
+					default:
+					}
+					_, _ = crypto_rand.Read(pstamp)
+					mu.Lock()
+					rounds++
+					mu.Unlock()
+					if StampValid(pstamp, stampCost, workblock) {
+						mu.Lock()
+						if found == nil {
+							found = append([]byte{}, pstamp...)
+						}
+						mu.Unlock()
+						return
+					}
+				}
+			}()
+		}
+
+		wg.Wait()
+		totalRounds += rounds
+
+		select {
+		case <-job.cancel:
+			activeJobsMu.Lock()
+			delete(activeJobs, key)
+			activeJobsMu.Unlock()
+			return nil, totalRounds
+		default:
+		}
+
+		if found != nil {
+			stamp = found
+			break
+		}
+		elapsed := time.Since(start).Seconds()
+		if elapsed > 0 {
+			speed := float64(totalRounds) / elapsed
+			rns.Log(fmt.Sprintf("Stamp generation running. %d rounds completed so far, %d rounds per second", totalRounds, int(speed)), rns.LOG_DEBUG)
+		}
 	}
 
 	activeJobsMu.Lock()

@@ -64,6 +64,7 @@ const (
 
 	URISchema         = "lxm"
 	QRErrorCorrection = "ERROR_CORRECT_L"
+	QRBorder          = 1
 	QRMaxStorage      = 2953
 	PaperMDU          = ((QRMaxStorage - (len(URISchema) + len("://"))) * 6) / 8
 )
@@ -77,6 +78,14 @@ var (
 	PlainPacketMaxContent     = PlainPacketMDU - LXMFOverhead + DestinationLength
 )
 
+type QRGenerator func(data string, errorCorrection string, border int) (any, error)
+
+var qrGenerator QRGenerator
+
+func RegisterQRGenerator(generator QRGenerator) {
+	qrGenerator = generator
+}
+
 type LXMessage struct {
 	destination *rns.Destination
 	source      *rns.Destination
@@ -85,7 +94,7 @@ type LXMessage struct {
 	SourceHash      []byte
 	Title           []byte
 	Content         []byte
-	Fields          map[string]any
+	Fields          map[any]any
 
 	Payload     []any
 	Timestamp   float64
@@ -138,7 +147,7 @@ type LXMessage struct {
 	DeferredStampGenerating bool
 }
 
-func NewLXMessage(destination, source *rns.Destination, content, title string, fields map[string]any, desiredMethod byte, destinationHash, sourceHash []byte, stampCost *int, includeTicket bool) (*LXMessage, error) {
+func NewLXMessage(destination, source *rns.Destination, content, title string, fields map[any]any, desiredMethod byte, destinationHash, sourceHash []byte, stampCost *int, includeTicket bool) (*LXMessage, error) {
 	msg := &LXMessage{
 		StampCost:             stampCost,
 		IncludeTicket:         includeTicket,
@@ -214,9 +223,9 @@ func (m *LXMessage) ContentAsString() string {
 	return string(m.Content)
 }
 
-func (m *LXMessage) SetFields(fields map[string]any) {
+func (m *LXMessage) SetFields(fields map[any]any) {
 	if fields == nil {
-		m.Fields = map[string]any{}
+		m.Fields = map[any]any{}
 		return
 	}
 	m.Fields = fields
@@ -310,7 +319,7 @@ func (m *LXMessage) GetStamp(timeout *time.Duration) []byte {
 		return m.Stamp
 	}
 
-	generated, value := GenerateStamp(m.MessageID, *m.StampCost, WorkblockExpandRounds)
+	generated, value := generateStampWithTimeout(m.MessageID, *m.StampCost, WorkblockExpandRounds, timeout)
 	if generated != nil {
 		m.StampValue = &value
 		m.StampValid = true
@@ -332,7 +341,7 @@ func (m *LXMessage) GetPropagationStamp(targetCost int, timeout *time.Duration) 
 	if len(m.TransientID) == 0 {
 		_ = m.Pack(false)
 	}
-	generated, value := GenerateStamp(m.TransientID, targetCost, WorkblockExpandRoundsPN)
+	generated, value := generateStampWithTimeout(m.TransientID, targetCost, WorkblockExpandRoundsPN, timeout)
 	if generated != nil {
 		m.PropagationStamp = generated
 		m.PropagationStampValue = &value
@@ -437,6 +446,7 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 		singlePacketContentLimit := LinkPacketMaxContent
 		if m.PNEncryptedData == nil || payloadUpdated {
 			m.PNEncryptedData = m.destination.Encrypt(m.Packed[DestinationLength:])
+			m.setRatchetFromDestination()
 		}
 		lxmfData := append(append([]byte{}, m.Packed[:DestinationLength]...), m.PNEncryptedData...)
 		m.TransientID = rns.FullHash(lxmfData)
@@ -459,6 +469,7 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 	case MethodPaper:
 		paperContentLimit := PaperMDU
 		encrypted := m.destination.Encrypt(m.Packed[DestinationLength:])
+		m.setRatchetFromDestination()
 		m.PaperPacked = append(append([]byte{}, m.Packed[:DestinationLength]...), encrypted...)
 		contentSize = len(m.PaperPacked)
 		if contentSize <= paperContentLimit {
@@ -481,6 +492,7 @@ func (m *LXMessage) Send() {
 	case MethodOpportunistic:
 		pkt := m.asPacket()
 		receipt := pkt.Send()
+		m.setRatchetFromPacket(pkt)
 		if receipt != nil {
 			receipt.SetDeliveryCallback(func(_ *rns.PacketReceipt) { m.markDelivered(nil) })
 		}
@@ -492,6 +504,7 @@ func (m *LXMessage) Send() {
 		case RepresentationPacket:
 			pkt := m.asPacket()
 			receipt := pkt.Send()
+			m.setRatchetFromLink()
 			if receipt != nil {
 				receipt.SetDeliveryCallback(func(_ *rns.PacketReceipt) { m.markDelivered(nil) })
 				receipt.SetTimeoutCallback(m.linkPacketTimedOut)
@@ -501,6 +514,7 @@ func (m *LXMessage) Send() {
 			}
 		case RepresentationResource:
 			m.ResourceRepresentation = m.asResource()
+			m.setRatchetFromLink()
 			m.Progress = 0.10
 		}
 	case MethodPropagated:
@@ -563,27 +577,21 @@ func (m *LXMessage) markDelivered(_ *rns.PacketReceipt) {
 	rns.Log("Received delivery notification for "+m.String(), rns.LOG_DEBUG)
 	m.State = MessageDelivered
 	m.Progress = 1.0
-	if m.DeliveryCallback != nil {
-		m.DeliveryCallback(m)
-	}
+	m.invokeDeliveryCallback()
 }
 
 func (m *LXMessage) markPropagated(_ *rns.PacketReceipt) {
 	rns.Log("Received propagation success notification for "+m.String(), rns.LOG_DEBUG)
 	m.State = MessageSent
 	m.Progress = 1.0
-	if m.DeliveryCallback != nil {
-		m.DeliveryCallback(m)
-	}
+	m.invokeDeliveryCallback()
 }
 
 func (m *LXMessage) markPaperGenerated(_ *rns.PacketReceipt) {
 	rns.Log("Paper message generation succeeded for "+m.String(), rns.LOG_DEBUG)
 	m.State = MethodPaper
 	m.Progress = 1.0
-	if m.DeliveryCallback != nil {
-		m.DeliveryCallback(m)
-	}
+	m.invokeDeliveryCallback()
 }
 
 func (m *LXMessage) resourceConcluded(res *rns.Resource) {
@@ -724,9 +732,11 @@ func (m *LXMessage) WriteToDirectory(directoryPath string) (string, error) {
 	filePath := directoryPath + "/" + fileName
 	container, err := m.PackedContainer()
 	if err != nil {
+		rns.Log("Error while writing LXMF message to file \""+filePath+"\". The contained exception was: "+err.Error(), rns.LOG_ERROR)
 		return "", err
 	}
 	if err := os.WriteFile(filePath, container, 0o600); err != nil {
+		rns.Log("Error while writing LXMF message to file \""+filePath+"\". The contained exception was: "+err.Error(), rns.LOG_ERROR)
 		return "", err
 	}
 	return filePath, nil
@@ -754,7 +764,31 @@ func (m *LXMessage) AsURI(finalise bool) (string, error) {
 }
 
 func (m *LXMessage) AsQR() (any, error) {
-	return nil, errors.New("QR output is not implemented; provide a QR generator or external dependency")
+	if len(m.Packed) == 0 {
+		if err := m.Pack(false); err != nil {
+			return nil, err
+		}
+	}
+
+	if m.DesiredMethod == MethodPaper && len(m.PaperPacked) > 0 {
+		if qrGenerator == nil {
+			rns.Log("Generating QR-code representations of LXMs requires a QR generator to be registered.", rns.LOG_CRITICAL)
+			return nil, errors.New("QR output is not available; register a QR generator")
+		}
+		uri, err := m.AsURI(false)
+		if err != nil {
+			return nil, err
+		}
+		qr, err := qrGenerator(uri, QRErrorCorrection, QRBorder)
+		if err != nil {
+			return nil, err
+		}
+		m.DetermineTransportEncryption()
+		m.markPaperGenerated(nil)
+		return qr, nil
+	}
+
+	return nil, errors.New("attempt to represent LXM with non-paper delivery method as QR-code")
 }
 
 func UnpackFromBytes(lxmfBytes []byte, originalMethod byte) (*LXMessage, error) {
@@ -891,6 +925,42 @@ func trimBase64Padding(s string) string {
 	return s
 }
 
+func (m *LXMessage) invokeDeliveryCallback() {
+	if m.DeliveryCallback == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			rns.Log("An error occurred in the external delivery callback for "+m.String()+": "+fmt.Sprint(r), rns.LOG_ERROR)
+		}
+	}()
+	m.DeliveryCallback(m)
+}
+
+func (m *LXMessage) setRatchetFromPacket(pkt *rns.Packet) {
+	if pkt == nil || len(pkt.RatchetID) == 0 {
+		return
+	}
+	m.RatchetID = copyBytes(pkt.RatchetID)
+}
+
+func (m *LXMessage) setRatchetFromLink() {
+	link, ok := m.DeliveryDestination.(*rns.Link)
+	if !ok || link == nil || len(link.LinkID) == 0 {
+		return
+	}
+	m.RatchetID = copyBytes(link.LinkID)
+}
+
+func (m *LXMessage) setRatchetFromDestination() {
+	if len(m.DestinationHash) == 0 {
+		return
+	}
+	if ratchetID := rns.IdentityCurrentRatchetID(m.DestinationHash); len(ratchetID) > 0 {
+		m.RatchetID = copyBytes(ratchetID)
+	}
+}
+
 func toBytes(v any) []byte {
 	switch t := v.(type) {
 	case []byte:
@@ -899,6 +969,33 @@ func toBytes(v any) []byte {
 		return []byte(t)
 	default:
 		return nil
+	}
+}
+
+type stampResult struct {
+	stamp []byte
+	value int
+}
+
+func generateStampWithTimeout(messageID []byte, cost int, expandRounds int, timeout *time.Duration) ([]byte, int) {
+	if timeout == nil || *timeout <= 0 {
+		return GenerateStamp(messageID, cost, expandRounds)
+	}
+	resultCh := make(chan stampResult, 1)
+	go func() {
+		stamp, value := GenerateStamp(messageID, cost, expandRounds)
+		resultCh <- stampResult{stamp: stamp, value: value}
+	}()
+
+	timer := time.NewTimer(*timeout)
+	defer timer.Stop()
+
+	select {
+	case result := <-resultCh:
+		return result.stamp, result.value
+	case <-timer.C:
+		CancelWork(messageID)
+		return nil, 0
 	}
 }
 
@@ -917,19 +1014,17 @@ func floatFromAny(v any) float64 {
 	}
 }
 
-func coerceFields(v any) map[string]any {
+func coerceFields(v any) map[any]any {
 	switch t := v.(type) {
-	case map[string]any:
-		return t
 	case map[any]any:
-		out := make(map[string]any, len(t))
+		return t
+	case map[string]any:
+		out := make(map[any]any, len(t))
 		for k, v := range t {
-			if ks, ok := k.(string); ok {
-				out[ks] = v
-			}
+			out[k] = v
 		}
 		return out
 	default:
-		return map[string]any{}
+		return map[any]any{}
 	}
 }

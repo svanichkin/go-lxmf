@@ -8,24 +8,37 @@ import (
 )
 
 type DeliveryAnnounceHandler struct {
-	AspectFilter         string
+	aspectFilter         string
 	ReceivePathResponses bool
 	Router               *LXMRouter
 }
 
 func NewDeliveryAnnounceHandler(router *LXMRouter) *DeliveryAnnounceHandler {
 	return &DeliveryAnnounceHandler{
-		AspectFilter:         AppName + ".delivery",
+		aspectFilter:         AppName + ".delivery",
 		ReceivePathResponses: true,
 		Router:               router,
 	}
+}
+
+func (h *DeliveryAnnounceHandler) AspectFilter() string {
+	return h.aspectFilter
 }
 
 func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte) {
 	if h.Router == nil {
 		return
 	}
-	if stampCost, ok := StampCostFromAppData(appData); ok {
+	if len(appData) > 0 && ((appData[0] >= 0x90 && appData[0] <= 0x9f) || appData[0] == 0xdc) {
+		var peerData []any
+		if err := umsgpack.Unpackb(appData, &peerData); err != nil {
+			rns.Log("An error occurred while trying to decode announced stamp cost. The contained exception was: "+err.Error(), rns.LOG_ERROR)
+		} else if len(peerData) >= 2 {
+			if stampCost, ok := asInt(peerData[1]); ok {
+				h.Router.UpdateStampCost(destinationHash, &stampCost)
+			}
+		}
+	} else if stampCost, ok := StampCostFromAppData(appData); ok {
 		h.Router.UpdateStampCost(destinationHash, &stampCost)
 	}
 
@@ -48,20 +61,24 @@ func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, annou
 }
 
 type PropagationAnnounceHandler struct {
-	AspectFilter         string
+	aspectFilter         string
 	ReceivePathResponses bool
 	Router               *LXMRouter
 }
 
 func NewPropagationAnnounceHandler(router *LXMRouter) *PropagationAnnounceHandler {
 	return &PropagationAnnounceHandler{
-		AspectFilter:         AppName + ".propagation",
+		aspectFilter:         AppName + ".propagation",
 		ReceivePathResponses: true,
 		Router:               router,
 	}
 }
 
-func (h *PropagationAnnounceHandler) ReceivedAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte, announcePacketHash []byte, isPathResponse bool) {
+func (h *PropagationAnnounceHandler) AspectFilter() string {
+	return h.aspectFilter
+}
+
+func (h *PropagationAnnounceHandler) ReceivedAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte) {
 	if h.Router == nil || len(appData) == 0 {
 		return
 	}
@@ -93,14 +110,12 @@ func (h *PropagationAnnounceHandler) ReceivedAnnounce(destinationHash []byte, an
 	if h.Router.IsStaticPeer(destinationHash) {
 		staticPeer := h.Router.PeerByHash(destinationHash)
 		if staticPeer != nil {
-			if !isPathResponse || staticPeer.LastHeard == 0 {
-				h.Router.Peer(destinationHash, nodeTimebase, propagationTransferLimit, propagationSyncLimit, propagationStampCost, propagationStampCostFlexibility, peeringCost, metadata)
-			}
+			h.Router.Peer(destinationHash, nodeTimebase, propagationTransferLimit, propagationSyncLimit, propagationStampCost, propagationStampCostFlexibility, peeringCost, metadata)
 		}
 		return
 	}
 
-	if h.Router.AutoPeer && !isPathResponse {
+	if h.Router.AutoPeer {
 		if propagationEnabled {
 			if rns.TransportHopsTo(destinationHash) <= h.Router.AutoPeerMaxDepth {
 				h.Router.Peer(destinationHash, nodeTimebase, propagationTransferLimit, propagationSyncLimit, propagationStampCost, propagationStampCostFlexibility, peeringCost, metadata)

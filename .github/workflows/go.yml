@@ -51,17 +51,14 @@ jobs:
 
       - name: Build linux/${{ matrix.arch }}
         shell: bash
-        env:
-          GOOS: linux
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
         run: |
           set -euo pipefail
           VERSION="${VERSION_TAG#v}"
+          GOARCH="${{ matrix.arch }}"
           OUTROOT="dist/go-lxmf-${VERSION}-linux-${GOARCH}"
           mkdir -p "$OUTROOT"
 
-          go build -trimpath -o "$OUTROOT/lxmd" ./cmd
+          GOOS=linux GOARCH="${{ matrix.arch }}" CGO_ENABLED=0 go build -trimpath -o "$OUTROOT/lxmd" ./cmd
           go run ./cmd -exampleconfig > "$OUTROOT/config"
           cp -f README.md LICENSE "$OUTROOT/"
           tar czvf "go-lxmf-linux-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
@@ -93,17 +90,14 @@ jobs:
 
       - name: Build windows/${{ matrix.arch }}
         shell: bash
-        env:
-          GOOS: windows
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
         run: |
           set -euo pipefail
           VERSION="${VERSION_TAG#v}"
+          GOARCH="${{ matrix.arch }}"
           OUTROOT="dist/go-lxmf-${VERSION}-windows-${GOARCH}"
           mkdir -p "$OUTROOT"
 
-          go build -trimpath -o "$OUTROOT/lxmd.exe" ./cmd
+          GOOS=windows GOARCH="${{ matrix.arch }}" CGO_ENABLED=0 go build -trimpath -o "$OUTROOT/lxmd.exe" ./cmd
           go run ./cmd -exampleconfig > "$OUTROOT/config"
           cp -f README.md LICENSE "$OUTROOT/"
           tar czvf "go-lxmf-windows-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
@@ -135,17 +129,14 @@ jobs:
 
       - name: Build darwin/${{ matrix.arch }}
         shell: bash
-        env:
-          GOOS: darwin
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
         run: |
           set -euo pipefail
           VERSION="${VERSION_TAG#v}"
+          GOARCH="${{ matrix.arch }}"
           OUTROOT="dist/go-lxmf-${VERSION}-darwin-${GOARCH}"
           mkdir -p "$OUTROOT"
 
-          go build -trimpath -o "$OUTROOT/lxmd" ./cmd
+          GOOS=darwin GOARCH="${{ matrix.arch }}" CGO_ENABLED=1 go build -trimpath -o "$OUTROOT/lxmd" ./cmd
           go run ./cmd -exampleconfig > "$OUTROOT/config"
           cp -f README.md LICENSE "$OUTROOT/"
           tar czvf "go-lxmf-darwin-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"

@@ -1,28 +1,190 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
-name: Go
+name: CI and Release
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+  push:
+    branches: ["main"]
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
 
 jobs:
-
-  build:
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.20'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
 
-    - name: Build
-      run: go build -v ./...
+      - name: Build
+        run: go build -v ./...
 
-    - name: Test
-      run: go test -v ./...
+      - name: Unit tests
+        run: go test -v ./...
+
+  build_linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      VERSION_TAG: ${{ github.ref_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Build linux/${{ matrix.arch }}
+        shell: bash
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          OUTROOT="dist/go-lxmf-${VERSION}-linux-${GOARCH}"
+          mkdir -p "$OUTROOT"
+
+          go build -trimpath -o "$OUTROOT/lxmd" ./cmd
+          go run ./cmd -exampleconfig > "$OUTROOT/config"
+          cp -f README.md LICENSE "$OUTROOT/"
+          tar czvf "go-lxmf-linux-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-lxmf-linux-${{ matrix.arch }}
+          path: go-lxmf-linux-${{ matrix.arch }}.tar.gz
+
+  build_windows:
+    name: Build Windows
+    runs-on: windows-latest
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      VERSION_TAG: ${{ github.ref_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Build windows/${{ matrix.arch }}
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          OUTROOT="dist/go-lxmf-${VERSION}-windows-${GOARCH}"
+          mkdir -p "$OUTROOT"
+
+          go build -trimpath -o "$OUTROOT/lxmd.exe" ./cmd
+          go run ./cmd -exampleconfig > "$OUTROOT/config"
+          cp -f README.md LICENSE "$OUTROOT/"
+          tar czvf "go-lxmf-windows-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-lxmf-windows-${{ matrix.arch }}
+          path: go-lxmf-windows-${{ matrix.arch }}.tar.gz
+
+  build_darwin:
+    name: Build macOS
+    runs-on: macos-latest
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      VERSION_TAG: ${{ github.ref_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Build darwin/${{ matrix.arch }}
+        shell: bash
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          OUTROOT="dist/go-lxmf-${VERSION}-darwin-${GOARCH}"
+          mkdir -p "$OUTROOT"
+
+          go build -trimpath -o "$OUTROOT/lxmd" ./cmd
+          go run ./cmd -exampleconfig > "$OUTROOT/config"
+          cp -f README.md LICENSE "$OUTROOT/"
+          tar czvf "go-lxmf-darwin-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-lxmf-darwin-${{ matrix.arch }}
+          path: go-lxmf-darwin-${{ matrix.arch }}.tar.gz
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs:
+      - build_linux
+      - build_windows
+      - build_darwin
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          find . -name '*.tar.gz' -print | while read -r file; do
+            echo "Checksum for $file"
+            sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
+          done
+          ls -laR
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.sha256
+          generate_release_notes: true

@@ -2,6 +2,7 @@ package lxmf
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/svanichkin/go-reticulum/rns"
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
@@ -94,12 +95,23 @@ func DisplayNameFromAppData(appData []byte) string {
 		if len(peerData) < 1 || peerData[0] == nil {
 			return ""
 		}
-		nameBytes, ok := peerData[0].([]byte)
-		if !ok {
+		switch name := peerData[0].(type) {
+		case []byte:
+			if !utf8.Valid(name) {
+				rns.Log("Could not decode display name in included announce data: invalid UTF-8", rns.LOG_ERROR)
+				return ""
+			}
+			return string(name)
+		case string:
+			if !utf8.ValidString(name) {
+				rns.Log("Could not decode display name in included announce data: invalid UTF-8", rns.LOG_ERROR)
+				return ""
+			}
+			return name
+		default:
 			rns.Log("Could not decode display name in included announce data: invalid type", rns.LOG_ERROR)
 			return ""
 		}
-		return string(nameBytes)
 	}
 
 	return string(appData)
@@ -122,6 +134,14 @@ func StampCostFromAppData(appData []byte) (int, bool) {
 		case int:
 			return v, true
 		case int64:
+			return int(v), true
+		case int32:
+			return int(v), true
+		case uint:
+			return int(v), true
+		case uint64:
+			return int(v), true
+		case uint32:
 			return int(v), true
 		case float64:
 			return int(v), true
@@ -146,18 +166,54 @@ func PNNameFromAppData(appData []byte) string {
 		return ""
 	}
 	meta, ok := data[6].(map[any]any)
-	if !ok {
+	var name any
+	if ok {
+		if v, ok := meta[PNMetaName]; ok {
+			name = v
+		} else {
+			for k, v := range meta {
+				if keyInt, ok := asInt(k); ok && keyInt == PNMetaName {
+					name = v
+					break
+				}
+				switch key := k.(type) {
+				case []byte:
+					if len(key) == 1 && int(key[0]) == PNMetaName {
+						name = v
+						break
+					}
+				case string:
+					if len(key) == 1 && int(key[0]) == PNMetaName {
+						name = v
+						break
+					}
+				}
+			}
+		}
+	} else if metaStr, ok := data[6].(map[string]any); ok {
+		if v, ok := metaStr[fmt.Sprintf("%d", PNMetaName)]; ok {
+			name = v
+		} else if v, ok := metaStr[string([]byte{byte(PNMetaName)})]; ok {
+			name = v
+		}
+	}
+	if name == nil {
 		return ""
 	}
-	name, ok := meta[PNMetaName]
-	if !ok {
+	switch v := name.(type) {
+	case []byte:
+		if !utf8.Valid(v) {
+			return ""
+		}
+		return string(v)
+	case string:
+		if !utf8.ValidString(v) {
+			return ""
+		}
+		return v
+	default:
 		return ""
 	}
-	nameBytes, ok := name.([]byte)
-	if !ok {
-		return ""
-	}
-	return string(nameBytes)
 }
 
 func PNStampCostFromAppData(appData []byte) (int, bool) {
@@ -180,6 +236,14 @@ func PNStampCostFromAppData(appData []byte) (int, bool) {
 	case int:
 		return v, true
 	case int64:
+		return int(v), true
+	case int32:
+		return int(v), true
+	case uint:
+		return int(v), true
+	case uint64:
+		return int(v), true
+	case uint32:
 		return int(v), true
 	case float64:
 		return int(v), true
@@ -252,7 +316,23 @@ func asInt(v any) (int, bool) {
 	switch t := v.(type) {
 	case int:
 		return t, true
+	case int8:
+		return int(t), true
+	case int16:
+		return int(t), true
+	case int32:
+		return int(t), true
 	case int64:
+		return int(t), true
+	case uint:
+		return int(t), true
+	case uint8:
+		return int(t), true
+	case uint16:
+		return int(t), true
+	case uint32:
+		return int(t), true
+	case uint64:
 		return int(t), true
 	case float64:
 		return int(t), true

@@ -15,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"os/signal"
 	"time"
+	"syscall"
 
 	"github.com/svanichkin/go-reticulum/rns"
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
@@ -181,6 +183,7 @@ type LXMRouter struct {
 	Peers            map[string]*LXMPeer
 	DirectLinks      map[string]*rns.Link
 	BackchannelLinks map[string]*rns.Link
+	backchannelIdentified map[*rns.Link]bool
 
 	OutboundStampCosts    map[string]stampCostEntry
 	AvailableTickets      *availableTickets
@@ -278,6 +281,7 @@ func NewLXMRouter(identity *rns.Identity, storagePath string) (*LXMRouter, error
 		Peers:                 map[string]*LXMPeer{},
 		DirectLinks:           map[string]*rns.Link{},
 		BackchannelLinks:      map[string]*rns.Link{},
+		backchannelIdentified: map[*rns.Link]bool{},
 		OutboundStampCosts:    map[string]stampCostEntry{},
 		AvailableTickets:      newAvailableTickets(),
 		LocallyDelivered:      map[string]int64{},
@@ -302,6 +306,7 @@ func NewLXMRouter(identity *rns.Identity, storagePath string) (*LXMRouter, error
 	router.loadOutboundStampCosts()
 	router.loadAvailableTickets()
 
+	router.InstallExitHandlers()
 	go router.JobLoop()
 
 	return router, nil
@@ -559,6 +564,25 @@ func (r *LXMRouter) MessageStorageSize() int64 {
 			total += entry.Size
 		}
 	}
+	return total
+}
+
+func (r *LXMRouter) InformationStorageSize() int64 {
+	if r.StoragePath == "" {
+		return 0
+	}
+	var total int64
+	_ = filepath.WalkDir(r.StoragePath, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d == nil || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
 	return total
 }
 
@@ -1087,12 +1111,37 @@ func (r *LXMRouter) ProcessOutbound() {
 				r.AvailableTickets.LastDeliveries[string(msg.DestinationHash)] = now
 				r.saveAvailableTickets()
 			}
+			if msg.Method == MethodDirect {
+				if link, ok := r.DirectLinks[string(msg.DestinationHash)]; ok && link != nil {
+					if link.Initiator && !r.backchannelIdentified[link] {
+						if src, ok := r.DeliveryDestinations[string(msg.SourceHash)]; ok && src != nil {
+							identity := src.Identity()
+							link.Identify(identity)
+							r.backchannelIdentified[link] = true
+							r.DeliveryLinkEstablished(link)
+							var backchannelHash []byte
+							if identity != nil {
+								backchannelHash = rns.HashFromNameAndIdentity("lxmf.delivery", identity.Hash)
+							}
+							rns.Log("Performed backchannel identification as "+rns.PrettyHexRep(backchannelHash)+" on "+link.String(), rns.LOG_DEBUG)
+						}
+					}
+				}
+			}
 			continue
 		case MessageSent:
 			if msg.Method == MethodPropagated {
 				continue
 			}
-		case MessageCancelled, MessageRejected:
+		case MessageCancelled:
+			if msg.FailedCallback != nil {
+				msg.FailedCallback(msg)
+			}
+			continue
+		case MessageRejected:
+			if msg.FailedCallback != nil {
+				msg.FailedCallback(msg)
+			}
 			continue
 		}
 		filtered = append(filtered, msg)
@@ -1104,8 +1153,8 @@ func (r *LXMRouter) ProcessOutbound() {
 		if msg == nil {
 			continue
 		}
-		if msg.State != MessageOutbound {
-			continue
+		if msg.Progress == 0 {
+			msg.Progress = 0.01
 		}
 		if msg.NextDeliveryAttempt > now {
 			continue
@@ -1117,46 +1166,149 @@ func (r *LXMRouter) ProcessOutbound() {
 
 		switch msg.Method {
 		case MethodOpportunistic:
-			if !rns.TransportHasPath(msg.DestinationHash) {
-				rns.TransportRequestPath(msg.DestinationHash)
-				msg.NextDeliveryAttempt = time.Now().Unix() + PathRequestWait
-				continue
+			if msg.DeliveryAttempts <= MaxDeliveryAttempts {
+				if msg.DeliveryAttempts >= MaxPathlessTries && !rns.TransportHasPath(msg.DestinationHash) {
+					rns.Log("Requesting path to "+rns.PrettyHexRep(msg.DestinationHash)+" after "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" pathless tries for "+msg.String(), rns.LOG_DEBUG)
+					msg.DeliveryAttempts++
+					rns.TransportRequestPath(msg.DestinationHash)
+					msg.NextDeliveryAttempt = time.Now().Unix() + PathRequestWait
+					msg.Progress = 0.01
+					continue
+				} else if msg.DeliveryAttempts == MaxPathlessTries+1 && rns.TransportHasPath(msg.DestinationHash) {
+					rns.Log("Opportunistic delivery for "+msg.String()+" still unsuccessful after "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" attempts, trying to rediscover path to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+					msg.DeliveryAttempts++
+					_ = rns.DropPath(msg.DestinationHash)
+					go func() {
+						time.Sleep(500 * time.Millisecond)
+						rns.TransportRequestPath(msg.DestinationHash)
+					}()
+					msg.NextDeliveryAttempt = time.Now().Unix() + PathRequestWait
+					msg.Progress = 0.01
+					continue
+				}
+
+				if msg.NextDeliveryAttempt == 0 || time.Now().Unix() > msg.NextDeliveryAttempt {
+					msg.DeliveryAttempts++
+					msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
+					rns.Log("Opportunistic delivery attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" for "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+					msg.SetDeliveryDestination(msg.Destination())
+					msg.Send()
+				}
+			} else {
+				rns.Log("Max delivery attempts reached for oppertunistic "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+				r.failMessage(msg)
 			}
-			msg.SetDeliveryDestination(msg.Destination())
-			msg.Send()
 		case MethodDirect:
-			link := r.getOrCreateDirectLink(msg.DestinationHash)
-			if link == nil || link.Status != rns.LinkActive {
-				msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
-				continue
+			if msg.DeliveryAttempts <= MaxDeliveryAttempts {
+				var link *rns.Link
+				if existing, ok := r.DirectLinks[string(msg.DestinationHash)]; ok && existing != nil {
+					link = existing
+					rns.Log("Using available direct link "+link.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+				} else if existing, ok := r.BackchannelLinks[string(msg.DestinationHash)]; ok && existing != nil {
+					link = existing
+					rns.Log("Using available backchannel link "+link.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+				}
+
+				if link != nil {
+					if link.Status == rns.LinkActive {
+						if msg.Progress < 0.05 {
+							msg.Progress = 0.05
+						}
+						if msg.State != MessageSending {
+							rns.Log("Starting transfer of "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash)+" on link "+link.String(), rns.LOG_DEBUG)
+							msg.SetDeliveryDestination(link)
+							msg.Send()
+						} else {
+							if msg.Representation == RepresentationResource {
+								rns.Log("The transfer of "+msg.String()+" is in progress ("+fmt.Sprintf("%.1f", msg.Progress*100)+"%)", rns.LOG_DEBUG)
+							} else {
+								rns.Log("Waiting for proof for "+msg.String()+" sent as link packet", rns.LOG_DEBUG)
+							}
+						}
+					} else if link.Status == rns.LinkClosed {
+						rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" was closed", rns.LOG_DEBUG)
+						rns.TransportRequestPath(msg.DestinationHash)
+						msg.SetDeliveryDestination(nil)
+						delete(r.DirectLinks, string(msg.DestinationHash))
+						delete(r.BackchannelLinks, string(msg.DestinationHash))
+						msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
+					} else {
+						rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" is pending, waiting for link to become active", rns.LOG_DEBUG)
+					}
+				} else {
+					if msg.NextDeliveryAttempt == 0 || time.Now().Unix() > msg.NextDeliveryAttempt {
+						msg.DeliveryAttempts++
+						msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
+						if msg.DeliveryAttempts < MaxDeliveryAttempts {
+							if rns.TransportHasPath(msg.DestinationHash) {
+								rns.Log("Establishing link to "+rns.PrettyHexRep(msg.DestinationHash)+" for delivery attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+								r.getOrCreateDirectLink(msg.DestinationHash)
+								msg.Progress = 0.03
+							} else {
+								rns.Log("No path known for delivery attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(msg.DestinationHash)+". Requesting path...", rns.LOG_DEBUG)
+								rns.TransportRequestPath(msg.DestinationHash)
+								msg.NextDeliveryAttempt = time.Now().Unix() + PathRequestWait
+								msg.Progress = 0.01
+							}
+						}
+					}
+				}
+			} else {
+				rns.Log("Max delivery attempts reached for direct "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+				r.failMessage(msg)
 			}
-			msg.SetDeliveryDestination(link)
-			msg.Send()
 		case MethodPropagated:
+			rns.Log("Attempting propagated delivery for "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
 			if len(r.OutboundPropagationNode) == 0 {
-				rns.Log("No outbound propagation node specified for propagated "+msg.String(), rns.LOG_ERROR)
-				msg.State = MessageFailed
+				rns.Log("No outbound propagation node specified for propagated "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_ERROR)
+				r.failMessage(msg)
 				continue
 			}
-			link := r.getOrCreatePropagationLink()
-			if link == nil || link.Status != rns.LinkActive {
-				msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
-				continue
+			if msg.DeliveryAttempts <= MaxDeliveryAttempts {
+				if r.OutboundPropagationLink != nil {
+					if r.OutboundPropagationLink.Status == rns.LinkActive {
+						if msg.State != MessageSending {
+							r.OutboundPropagationForMessage = msg
+							r.OutboundPropagationLink.SetPacketCallback(r.PropagationTransferSignallingPacket)
+							rns.Log("Starting propagation transfer of "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash)+" via "+rns.PrettyHexRep(r.OutboundPropagationNode), rns.LOG_DEBUG)
+							msg.SetDeliveryDestination(r.OutboundPropagationLink)
+							msg.Send()
+						} else {
+							if msg.Representation == RepresentationResource {
+								rns.Log("The transfer of "+msg.String()+" is in progress ("+fmt.Sprintf("%.1f", msg.Progress*100)+"%)", rns.LOG_DEBUG)
+							} else {
+								rns.Log("Waiting for proof for "+msg.String()+" sent as link packet", rns.LOG_DEBUG)
+							}
+						}
+					} else if r.OutboundPropagationLink.Status == rns.LinkClosed {
+						rns.Log("The link to "+rns.PrettyHexRep(r.OutboundPropagationNode)+" was closed", rns.LOG_DEBUG)
+						r.OutboundPropagationLink = nil
+						msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
+					} else {
+						rns.Log("The propagation link to "+rns.PrettyHexRep(r.OutboundPropagationNode)+" is pending, waiting for link to become active", rns.LOG_DEBUG)
+					}
+				} else {
+					if msg.NextDeliveryAttempt == 0 || time.Now().Unix() > msg.NextDeliveryAttempt {
+						msg.DeliveryAttempts++
+						msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
+						if msg.DeliveryAttempts < MaxDeliveryAttempts {
+							if rns.TransportHasPath(r.OutboundPropagationNode) {
+								rns.Log("Establishing link to "+rns.PrettyHexRep(r.OutboundPropagationNode)+" for propagation attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+								r.getOrCreatePropagationLink()
+							} else {
+								rns.Log("No path known for propagation attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(r.OutboundPropagationNode)+". Requesting path...", rns.LOG_DEBUG)
+								rns.TransportRequestPath(r.OutboundPropagationNode)
+								msg.NextDeliveryAttempt = time.Now().Unix() + PathRequestWait
+							}
+						}
+					}
+				}
+			} else {
+				rns.Log("Max delivery attempts reached for propagated "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
+				r.failMessage(msg)
 			}
-			msg.SetDeliveryDestination(link)
-			msg.Send()
 		default:
 			msg.State = MessageFailed
-		}
-
-		if msg.State == MessageOutbound {
-			msg.DeliveryAttempts++
-			if msg.DeliveryAttempts > MaxDeliveryAttempts {
-				msg.State = MessageFailed
-				r.FailedOutbound = append(r.FailedOutbound, msg)
-			} else {
-				msg.NextDeliveryAttempt = time.Now().Unix() + DeliveryRetryWait
-			}
 		}
 	}
 }
@@ -1165,19 +1317,76 @@ func (r *LXMRouter) ProcessDeferredStamps() {
 	r.stampGenMu.Lock()
 	defer r.stampGenMu.Unlock()
 
+	var selectedKey string
+	var selectedMsg *LXMessage
 	for key, msg := range r.PendingDeferredStamps {
-		if msg == nil {
-			delete(r.PendingDeferredStamps, key)
-			continue
-		}
-		if !msg.DeferStamp {
-			r.PendingOutbound = append(r.PendingOutbound, msg)
-			delete(r.PendingDeferredStamps, key)
+		if msg != nil {
+			selectedKey = key
+			selectedMsg = msg
+			break
 		}
 	}
-	if len(r.PendingOutbound) > 0 {
-		go r.ProcessOutbound()
+	if selectedMsg == nil {
+		return
 	}
+
+	if selectedMsg.State == MessageCancelled {
+		rns.Log("Message cancelled during deferred stamp generation for "+selectedMsg.String(), rns.LOG_DEBUG)
+		delete(r.PendingDeferredStamps, selectedKey)
+		r.failMessage(selectedMsg)
+		return
+	}
+
+	if selectedMsg.DeferStamp && selectedMsg.Stamp == nil {
+		rns.Log("Starting stamp generation for "+selectedMsg.String()+"...", rns.LOG_DEBUG)
+		generated := selectedMsg.GetStamp(nil)
+		if generated == nil {
+			if selectedMsg.State == MessageCancelled {
+				rns.Log("Message cancelled during deferred stamp generation for "+selectedMsg.String(), rns.LOG_DEBUG)
+			} else {
+				rns.Log("Deferred stamp generation did not succeed. Failing "+selectedMsg.String(), rns.LOG_ERROR)
+			}
+			delete(r.PendingDeferredStamps, selectedKey)
+			r.failMessage(selectedMsg)
+			return
+		}
+		selectedMsg.Stamp = generated
+		selectedMsg.DeferStamp = false
+		selectedMsg.Packed = nil
+		_ = selectedMsg.Pack(true)
+		rns.Log("Stamp generation completed for "+selectedMsg.String(), rns.LOG_DEBUG)
+	}
+
+	if selectedMsg.DesiredMethod == MethodPropagated && selectedMsg.DeferPropagationStamp && selectedMsg.PropagationStamp == nil {
+		rns.Log("Starting propagation stamp generation for "+selectedMsg.String()+"...", rns.LOG_DEBUG)
+		targetCost := r.GetOutboundPropagationCost()
+		if targetCost == nil {
+			rns.Log("Failed to get propagation node stamp cost, cannot generate propagation stamp", rns.LOG_ERROR)
+			delete(r.PendingDeferredStamps, selectedKey)
+			r.failMessage(selectedMsg)
+			return
+		}
+		generated := selectedMsg.GetPropagationStamp(*targetCost, nil)
+		if generated == nil {
+			if selectedMsg.State == MessageCancelled {
+				rns.Log("Message cancelled during deferred propagation stamp generation for "+selectedMsg.String(), rns.LOG_DEBUG)
+			} else {
+				rns.Log("Deferred propagation stamp generation did not succeed. Failing "+selectedMsg.String(), rns.LOG_ERROR)
+			}
+			delete(r.PendingDeferredStamps, selectedKey)
+			r.failMessage(selectedMsg)
+			return
+		}
+		selectedMsg.PropagationStamp = generated
+		selectedMsg.DeferPropagationStamp = false
+		selectedMsg.Packed = nil
+		_ = selectedMsg.Pack(false)
+		rns.Log("Propagation stamp generation completed for "+selectedMsg.String(), rns.LOG_DEBUG)
+	}
+
+	delete(r.PendingDeferredStamps, selectedKey)
+	r.PendingOutbound = append(r.PendingOutbound, selectedMsg)
+	go r.ProcessOutbound()
 }
 
 func (r *LXMRouter) CleanTransientIDCaches() {
@@ -1205,6 +1414,7 @@ func (r *LXMRouter) CleanLinks() {
 			if len(link.LinkID) > 0 {
 				delete(r.ValidatedPeerLinks, string(link.LinkID))
 			}
+			delete(r.backchannelIdentified, link)
 			delete(r.DirectLinks, hash)
 		}
 	}
@@ -1281,6 +1491,35 @@ func (r *LXMRouter) JobLoop() {
 		r.Jobs()
 		time.Sleep(time.Duration(ProcessingInterval) * time.Second)
 	}
+}
+
+func (r *LXMRouter) ExitHandler() {
+	if r.exitHandlerRunning {
+		return
+	}
+	r.exitHandlerRunning = true
+
+	r.saveLocallyDelivered()
+	r.saveLocallyProcessed()
+	r.saveNodeStats()
+	r.savePeers()
+	r.exitHandlerRunning = false
+}
+
+func (r *LXMRouter) InstallExitHandlers() {
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		for range sigCh {
+			if !r.exitHandlerRunning {
+				rns.Log("Received shutdown signal, shutting down now!", rns.LOG_WARNING)
+				r.ExitHandler()
+				rns.Exit(0)
+			} else {
+				rns.Log("Received shutdown signal, but exit handler is running, keeping process alive until storage persist is complete", rns.LOG_WARNING)
+			}
+		}
+	}()
 }
 
 func (r *LXMRouter) GetOutboundStampCost(destinationHash []byte) *int {
@@ -1517,6 +1756,25 @@ func (r *LXMRouter) CancelOutbound(messageID []byte, cancelState byte) {
 	}
 }
 
+func (r *LXMRouter) failMessage(msg *LXMessage) {
+	if msg == nil {
+		return
+	}
+	msg.Progress = 0
+	if msg.State != MessageRejected {
+		msg.State = MessageFailed
+	}
+	r.FailedOutbound = append(r.FailedOutbound, msg)
+	if msg.FailedCallback != nil {
+		defer func() {
+			if rec := recover(); rec != nil {
+				rns.Log("Error while invoking failed callback for "+msg.String()+": "+fmt.Sprint(rec), rns.LOG_ERROR)
+			}
+		}()
+		msg.FailedCallback(msg)
+	}
+}
+
 func (r *LXMRouter) GetOutboundProgress(lxmHash []byte) *float64 {
 	for _, msg := range r.PendingOutbound {
 		if msg != nil && bytesEqual(msg.Hash, lxmHash) {
@@ -1617,12 +1875,17 @@ func (r *LXMRouter) LXMDelivery(lxmfData []byte, destinationType int, phyStats m
 		if msg.ValidateStamp(requiredCost, destinationTickets) {
 			msg.StampValid = true
 			msg.StampChecked = true
+			rns.Log("Received "+msg.String()+" with valid stamp", rns.LOG_DEBUG)
 		} else {
 			msg.StampValid = false
 			msg.StampChecked = true
-			if r.enforceStamps && !noStampEnforcement {
+			if noStampEnforcement {
+				rns.Log("Received "+msg.String()+" with invalid stamp, but allowing anyway, since stamp enforcement was temporarily disabled", rns.LOG_NOTICE)
+			} else if r.enforceStamps {
 				rns.Log("Received "+msg.String()+" with invalid stamp, rejecting", rns.LOG_NOTICE)
 				return false
+			} else {
+				rns.Log("Received "+msg.String()+" with invalid stamp, but allowing anyway, since stamp enforcement is disabled", rns.LOG_NOTICE)
 			}
 		}
 	}
@@ -1693,17 +1956,36 @@ func (r *LXMRouter) DeliveryPacket(data []byte, packet *rns.Packet) {
 	}
 
 	phyStats := map[string]float64{}
+	r.fillPacketStats(packet, phyStats)
+
+	r.LXMDelivery(lxmfData, int(packet.DestinationType), phyStats, packet.RatchetID, method, false, false)
+}
+
+func (r *LXMRouter) fillPacketStats(packet *rns.Packet, phyStats map[string]float64) {
+	if packet == nil || phyStats == nil {
+		return
+	}
 	if v := packet.GetRSSI(); v != nil {
 		phyStats["rssi"] = *v
+	} else if rns.Transport != nil {
+		if v := rns.Transport.GetPacketRSSI(packet.GetHash()); v != nil {
+			phyStats["rssi"] = *v
+		}
 	}
 	if v := packet.GetSNR(); v != nil {
 		phyStats["snr"] = *v
+	} else if rns.Transport != nil {
+		if v := rns.Transport.GetPacketSNR(packet.GetHash()); v != nil {
+			phyStats["snr"] = *v
+		}
 	}
 	if v := packet.GetQ(); v != nil {
 		phyStats["q"] = *v
+	} else if rns.Transport != nil {
+		if v := rns.Transport.GetPacketQ(packet.GetHash()); v != nil {
+			phyStats["q"] = *v
+		}
 	}
-
-	r.LXMDelivery(lxmfData, int(packet.DestinationType), phyStats, packet.RatchetID, method, false, false)
 }
 
 func (r *LXMRouter) CompileStats() map[any]any {
@@ -2260,7 +2542,7 @@ func (r *LXMRouter) MessageGetRequest(_ string, data any, _ []byte, _ []byte, re
 		return transientIDs
 	}
 
-	if haveField != nil {
+	if haveField != nil && !r.RetainSyncedOnNode {
 		for _, transientID := range decodeIDList(haveField) {
 			entry, ok := r.PropagationEntries[string(transientID)]
 			if !ok || entry == nil {
@@ -2458,16 +2740,26 @@ func (r *LXMRouter) CleanMessageStore() {
 		rns.Log("Cleaned "+fmt.Sprintf("%d", removedCount)+" entries from the message store", rns.LOG_VERBOSE)
 	}
 
-	if r.MessageStorageLimit == nil {
+	var bytesNeeded int64
+	if r.MessageStorageLimit != nil {
+		messageStorageSize := r.MessageStorageSize()
+		if messageStorageSize > int64(*r.MessageStorageLimit) {
+			bytesNeeded = messageStorageSize - int64(*r.MessageStorageLimit)
+		}
+	}
+	if r.InformationStorageLimit != nil {
+		infoSize := r.InformationStorageSize()
+		if infoSize > int64(*r.InformationStorageLimit) {
+			infoNeeded := infoSize - int64(*r.InformationStorageLimit)
+			if infoNeeded > bytesNeeded {
+				bytesNeeded = infoNeeded
+			}
+		}
+	}
+	if bytesNeeded == 0 {
 		return
 	}
 
-	messageStorageSize := r.MessageStorageSize()
-	if messageStorageSize <= int64(*r.MessageStorageLimit) {
-		return
-	}
-
-	bytesNeeded := messageStorageSize - int64(*r.MessageStorageLimit)
 	bytesCleaned := int64(0)
 
 	type weightedEntry struct {
@@ -2766,7 +3058,7 @@ func (r *LXMRouter) getOrCreatePropagationLink() *rns.Link {
 
 	link, err := rns.NewOutgoingLink(dest, rns.LinkModeDefault, func(l *rns.Link) {
 		r.OutboundPropagationLink = l
-		r.DeliveryLinkEstablished(l)
+		l.SetPacketCallback(r.PropagationTransferSignallingPacket)
 		r.ProcessOutbound()
 	}, func(l *rns.Link) {
 		if r.OutboundPropagationLink == l {

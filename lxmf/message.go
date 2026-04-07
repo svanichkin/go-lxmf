@@ -407,6 +407,10 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 		m.DesiredMethod = MethodDirect
 	}
 
+	if (m.DesiredMethod == MethodOpportunistic || m.DesiredMethod == MethodPropagated || m.DesiredMethod == MethodPaper) && m.destination == nil {
+		return errors.New("LXMessage cannot use opportunistic, propagated, or paper delivery without a destination object")
+	}
+
 	if m.DesiredMethod == MethodOpportunistic {
 		if m.destination != nil && m.destination.Type == rns.DestinationSINGLE {
 			if contentSize > EncryptedPacketMaxContent {

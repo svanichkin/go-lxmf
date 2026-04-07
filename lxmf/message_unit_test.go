@@ -1,6 +1,7 @@
 package lxmf
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/svanichkin/go-reticulum/rns"
@@ -93,3 +94,23 @@ func TestAsQRWithoutGenerator(t *testing.T) {
 	}
 }
 
+func TestPackRequiresDestinationObjectForEncryptedMethods(t *testing.T) {
+	src := newTestDest(t, "delivery")
+	methods := []byte{MethodOpportunistic, MethodPropagated, MethodPaper}
+
+	for _, method := range methods {
+		msg, err := NewLXMessage(nil, src, "hi", "t", nil, method, []byte("0123456789abcdef"), nil, nil, false)
+		if err != nil {
+			t.Fatalf("new message for method %d: %v", method, err)
+		}
+		msg.SourceHash = src.Hash()
+
+		err = msg.Pack(false)
+		if err == nil {
+			t.Fatalf("expected pack to fail for method %d without destination object", method)
+		}
+		if !strings.Contains(err.Error(), "without a destination object") {
+			t.Fatalf("unexpected error for method %d: %v", method, err)
+		}
+	}
+}

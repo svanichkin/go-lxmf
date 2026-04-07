@@ -290,7 +290,6 @@ func jobConcurrent(stampCost int, workblock []byte, messageID []byte) ([]byte, i
 
 		select {
 		case resultCh <- pstamp:
-			job.cancelOnce.Do(func() { close(job.cancel) })
 		default:
 		}
 		roundsCh <- rounds
@@ -304,6 +303,7 @@ func jobConcurrent(stampCost int, workblock []byte, messageID []byte) ([]byte, i
 
 	select {
 	case stamp = <-resultCh:
+		job.cancelOnce.Do(func() { close(job.cancel) })
 	case <-job.cancel:
 		stamp = nil
 	}

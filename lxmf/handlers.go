@@ -9,20 +9,24 @@ import (
 
 type DeliveryAnnounceHandler struct {
 	aspectFilter         string
-	ReceivePathResponses bool
+	receivePathResponses bool
 	Router               *LXMRouter
 }
 
 func NewDeliveryAnnounceHandler(router *LXMRouter) *DeliveryAnnounceHandler {
 	return &DeliveryAnnounceHandler{
 		aspectFilter:         AppName + ".delivery",
-		ReceivePathResponses: true,
+		receivePathResponses: true,
 		Router:               router,
 	}
 }
 
 func (h *DeliveryAnnounceHandler) AspectFilter() string {
 	return h.aspectFilter
+}
+
+func (h *DeliveryAnnounceHandler) ReceivePathResponses() bool {
+	return h != nil && h.receivePathResponses
 }
 
 func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte) {
@@ -62,14 +66,14 @@ func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, annou
 
 type PropagationAnnounceHandler struct {
 	aspectFilter         string
-	ReceivePathResponses bool
+	receivePathResponses bool
 	Router               *LXMRouter
 }
 
 func NewPropagationAnnounceHandler(router *LXMRouter) *PropagationAnnounceHandler {
 	return &PropagationAnnounceHandler{
 		aspectFilter:         AppName + ".propagation",
-		ReceivePathResponses: true,
+		receivePathResponses: true,
 		Router:               router,
 	}
 }
@@ -78,8 +82,20 @@ func (h *PropagationAnnounceHandler) AspectFilter() string {
 	return h.aspectFilter
 }
 
+func (h *PropagationAnnounceHandler) ReceivePathResponses() bool {
+	return h != nil && h.receivePathResponses
+}
+
 func (h *PropagationAnnounceHandler) ReceivedAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte) {
-	if h.Router == nil || len(appData) == 0 {
+	h.handleAnnounce(destinationHash, announcedIdentity, appData, false)
+}
+
+func (h *PropagationAnnounceHandler) ReceivedAnnounceWithPacketInfo(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte, _ []byte, isPathResponse bool) {
+	h.handleAnnounce(destinationHash, announcedIdentity, appData, isPathResponse)
+}
+
+func (h *PropagationAnnounceHandler) handleAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte, isPathResponse bool) {
+	if h.Router == nil || !h.Router.PropagationNode || len(appData) == 0 {
 		return
 	}
 	if !PNAnnounceDataIsValid(appData) {
@@ -109,13 +125,13 @@ func (h *PropagationAnnounceHandler) ReceivedAnnounce(destinationHash []byte, an
 
 	if h.Router.IsStaticPeer(destinationHash) {
 		staticPeer := h.Router.PeerByHash(destinationHash)
-		if staticPeer != nil {
+		if staticPeer != nil && (!isPathResponse || staticPeer.LastHeard == 0) {
 			h.Router.Peer(destinationHash, nodeTimebase, propagationTransferLimit, propagationSyncLimit, propagationStampCost, propagationStampCostFlexibility, peeringCost, metadata)
 		}
 		return
 	}
 
-	if h.Router.AutoPeer {
+	if h.Router.AutoPeer && !isPathResponse {
 		if propagationEnabled {
 			if rns.TransportHopsTo(destinationHash) <= h.Router.AutoPeerMaxDepth {
 				h.Router.Peer(destinationHash, nodeTimebase, propagationTransferLimit, propagationSyncLimit, propagationStampCost, propagationStampCostFlexibility, peeringCost, metadata)

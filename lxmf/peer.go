@@ -302,6 +302,13 @@ func (p *LXMPeer) PeeringKeyReady() bool {
 	return false
 }
 
+func (p *LXMPeer) stampCostsKnown() bool {
+	if p == nil {
+		return false
+	}
+	return p.PeeringCost > 0 && p.PropagationStampCost >= 0 && p.PropagationStampCostFlexibility >= 0
+}
+
 func (p *LXMPeer) PeeringKeyValue() *int {
 	if len(p.PeeringKey) == 2 {
 		if value, ok := intFromAny(p.PeeringKey[1]); ok {
@@ -353,7 +360,7 @@ func (p *LXMPeer) Sync() {
 	p.LastSyncAttempt = nowSeconds()
 
 	syncTimeReached := nowSeconds() > p.NextSyncAttempt
-	stampCostsKnown := p.PropagationStampCost != 0 && p.PropagationStampCostFlexibility != 0 && p.PeeringCost != 0
+	stampCostsKnown := p.stampCostsKnown()
 	peeringKeyReady := p.PeeringKeyReady()
 	syncChecks := syncTimeReached && stampCostsKnown && peeringKeyReady
 

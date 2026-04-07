@@ -3,6 +3,7 @@ package lxmf
 import (
 	"bytes"
 	"testing"
+	"time"
 )
 
 func TestStampWorkblockLength(t *testing.T) {
@@ -50,3 +51,43 @@ func TestStampValueDeterministic(t *testing.T) {
 	}
 }
 
+func TestJobConcurrentReturnsStampWhenWorkerFindsResult(t *testing.T) {
+	workblock := StampWorkblock([]byte("seed"), 1)
+
+	for i := 0; i < 16; i++ {
+		messageID := []byte{byte(i + 1)}
+		stamp, rounds := jobConcurrent(0, workblock, messageID)
+		if stamp == nil {
+			t.Fatalf("expected stamp on iteration %d, got nil", i)
+		}
+		if !StampValid(stamp, 0, workblock) {
+			t.Fatalf("expected returned stamp to validate on iteration %d", i)
+		}
+		if rounds != 0 {
+			t.Fatalf("expected zero rounds for zero-cost stamp on iteration %d, got %d", i, rounds)
+		}
+	}
+}
+
+func TestGenerateStampWithTimeoutCancelsActiveWork(t *testing.T) {
+	timeout := time.Millisecond
+	messageID := []byte("timeout-cancel")
+
+	stamp, value := generateStampWithTimeout(messageID, 255, 1, &timeout)
+	if stamp != nil || value != 0 {
+		t.Fatalf("expected timed out stamp generation to return nil/0")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		activeJobsMu.Lock()
+		_, exists := activeJobs[string(messageID)]
+		activeJobsMu.Unlock()
+		if !exists {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("expected active stamp job to be cleaned up after cancellation")
+}

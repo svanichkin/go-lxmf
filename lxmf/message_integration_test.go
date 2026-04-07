@@ -47,3 +47,27 @@ func TestMessagePaperURI(t *testing.T) {
 	}
 }
 
+func TestMessagePackPropagatedRequiresDestinationObject(t *testing.T) {
+	srcIdentity, err := rns.NewIdentity()
+	if err != nil {
+		t.Fatalf("new identity: %v", err)
+	}
+	src, err := rns.NewDestination(srcIdentity, rns.DestinationIN, rns.DestinationSINGLE, AppName, "delivery")
+	if err != nil {
+		t.Fatalf("new src: %v", err)
+	}
+
+	msg, err := NewLXMessage(nil, src, "payload", "title", nil, MethodPropagated, []byte("0123456789abcdef"), nil, nil, false)
+	if err != nil {
+		t.Fatalf("new message: %v", err)
+	}
+	msg.SourceHash = src.Hash()
+
+	err = msg.Pack(false)
+	if err == nil {
+		t.Fatalf("expected propagated pack to fail without destination object")
+	}
+	if !strings.Contains(err.Error(), "without a destination object") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

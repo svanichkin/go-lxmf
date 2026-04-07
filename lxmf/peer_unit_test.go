@@ -52,3 +52,27 @@ func TestPeerAcceptanceRateAndCounts(t *testing.T) {
 		t.Fatalf("expected acceptance rate 0.5, got %f", rate)
 	}
 }
+
+func TestPeerStampCostsKnownAllowsZeroFlexibility(t *testing.T) {
+	peer := &LXMPeer{
+		PeeringCost:                     18,
+		PropagationStampCost:            16,
+		PropagationStampCostFlexibility: 0,
+	}
+
+	if !peer.stampCostsKnown() {
+		t.Fatalf("expected zero stamp-cost flexibility to still count as known costs")
+	}
+}
+
+func TestPeerStampCostsKnownRequiresPeeringCost(t *testing.T) {
+	peer := &LXMPeer{
+		PeeringCost:                     0,
+		PropagationStampCost:            16,
+		PropagationStampCostFlexibility: 3,
+	}
+
+	if peer.stampCostsKnown() {
+		t.Fatalf("expected missing peering cost to block sync prerequisites")
+	}
+}

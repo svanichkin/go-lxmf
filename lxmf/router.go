@@ -2335,23 +2335,8 @@ func (r *LXMRouter) PropagationResourceConcluded(res *rns.Resource) {
 					peer = p
 					remoteStr = "peer " + remoteStr
 				} else {
-					appData := rns.IdentityRecallAppData(remoteHash)
-					if PNAnnounceDataIsValid(appData) && r.AutoPeer && rns.TransportHopsTo(remoteHash) <= r.AutoPeerMaxDepth {
-						var config []any
-						if err := umsgpack.Unpackb(appData, &config); err == nil && len(config) > 6 {
-							nodeTimebase := int(floatFromAny(config[1]))
-							propagationLimit := int(floatFromAny(config[3]))
-							syncLimit := int(floatFromAny(config[4]))
-							stampCosts, _ := config[5].([]any)
-							propagationCost := int(floatFromAny(stampCosts[0]))
-							propagationFlex := int(floatFromAny(stampCosts[1]))
-							peeringCost := int(floatFromAny(stampCosts[2]))
-							metadata, _ := config[6].(map[any]any)
-
-							rns.Log("Auto-peering with "+remoteStr+" discovered via incoming sync", rns.LOG_DEBUG)
-							r.Peer(remoteHash, nodeTimebase, propagationLimit, syncLimit, propagationCost, propagationFlex, peeringCost, metadata)
-							peer = r.Peers[string(remoteHash)]
-						}
+					if r.tryAutopeerFromSync(remoteHash, remoteStr) {
+						peer = r.Peers[string(remoteHash)]
 					}
 				}
 			}
@@ -2433,6 +2418,44 @@ func (r *LXMRouter) PropagationResourceConcluded(res *rns.Resource) {
 			rns.Log("Propagation transfer from "+remoteStr+" contained "+fmt.Sprintf("%d", invalidStamps)+" message"+ms+" with invalid stamps, throttled for "+rns.PrettyTime(float64(throttleTime), false, false), rns.LOG_NOTICE)
 		}
 	}
+}
+
+func (r *LXMRouter) tryAutopeerFromSync(remoteHash []byte, remoteStr string) bool {
+	if !r.AutoPeer || rns.TransportHopsTo(remoteHash) > r.AutoPeerMaxDepth {
+		return false
+	}
+
+	appData := rns.IdentityRecallAppData(remoteHash)
+	if !PNAnnounceDataIsValid(appData) {
+		return false
+	}
+
+	var config []any
+	if err := umsgpack.Unpackb(appData, &config); err != nil || len(config) <= 6 {
+		return false
+	}
+
+	propagationEnabled, ok := config[2].(bool)
+	if !ok || !propagationEnabled {
+		return false
+	}
+
+	stampCosts, ok := config[5].([]any)
+	if !ok || len(stampCosts) < 3 {
+		return false
+	}
+
+	nodeTimebase := int(floatFromAny(config[1]))
+	propagationLimit := int(floatFromAny(config[3]))
+	syncLimit := int(floatFromAny(config[4]))
+	propagationCost := int(floatFromAny(stampCosts[0]))
+	propagationFlex := int(floatFromAny(stampCosts[1]))
+	peeringCost := int(floatFromAny(stampCosts[2]))
+	metadata, _ := config[6].(map[any]any)
+
+	rns.Log("Auto-peering with "+remoteStr+" discovered via incoming sync", rns.LOG_DEBUG)
+	r.Peer(remoteHash, nodeTimebase, propagationLimit, syncLimit, propagationCost, propagationFlex, peeringCost, metadata)
+	return r.Peers[string(remoteHash)] != nil
 }
 
 func (r *LXMRouter) OfferRequest(_ string, data any, _ []byte, linkID []byte, remoteIdentity *rns.Identity, _ time.Time) any {
@@ -2754,15 +2777,6 @@ func (r *LXMRouter) CleanMessageStore() {
 		messageStorageSize := r.MessageStorageSize()
 		if messageStorageSize > int64(*r.MessageStorageLimit) {
 			bytesNeeded = messageStorageSize - int64(*r.MessageStorageLimit)
-		}
-	}
-	if r.InformationStorageLimit != nil {
-		infoSize := r.InformationStorageSize()
-		if infoSize > int64(*r.InformationStorageLimit) {
-			infoNeeded := infoSize - int64(*r.InformationStorageLimit)
-			if infoNeeded > bytesNeeded {
-				bytesNeeded = infoNeeded
-			}
 		}
 	}
 	if bytesNeeded == 0 {

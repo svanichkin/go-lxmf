@@ -38,3 +38,11 @@ func TestPNAnnounceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDisplayNameFromAppDataLegacyRoundTripRejectsInvalidUTF8(t *testing.T) {
+	if got := DisplayNameFromAppData([]byte("legacy-node")); got != "legacy-node" {
+		t.Fatalf("unexpected legacy display name: %s", got)
+	}
+	if got := DisplayNameFromAppData([]byte{0xff, 0xfe, 0xfd}); got != "" {
+		t.Fatalf("expected invalid legacy utf-8 to be rejected, got %q", got)
+	}
+}

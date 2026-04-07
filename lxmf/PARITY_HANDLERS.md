@@ -1,7 +1,7 @@
 # Parity: python/LXMF/Handlers.py
 
 # Status
-- Delivery and propagation announce handling now mirrors the Python logic, including stamp cost extraction and propagation peer management.
+- Delivery and propagation announce handling now mirrors the Python 0.9.4 logic, including stamp cost extraction, the propagation-node guard, propagation peer management, and the special path-response handling for autopeering and static peers.
 
 # TODO
-- Ensure `PropagationAnnounceHandler` short-circuits when the router is not configured as a propagation node, matching the Python guard that avoids unpacking PN announces when `propagation_node` is false.
+- None.

@@ -20,6 +20,12 @@ func TestDisplayNameFromAppData(t *testing.T) {
 	}
 }
 
+func TestDisplayNameFromAppDataRejectsInvalidLegacyUTF8(t *testing.T) {
+	if got := DisplayNameFromAppData([]byte{0xff, 0xfe}); got != "" {
+		t.Fatalf("expected invalid legacy display name to be rejected, got %q", got)
+	}
+}
+
 func TestStampCostFromAppData(t *testing.T) {
 	appData, err := umsgpack.Packb([]any{nil, 7})
 	if err != nil {
@@ -55,4 +61,3 @@ func TestPNAnnounceHelpers(t *testing.T) {
 		t.Fatalf("unexpected PN stamp cost: %d (ok=%v)", cost, ok)
 	}
 }
-

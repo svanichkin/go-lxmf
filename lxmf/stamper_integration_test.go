@@ -52,3 +52,45 @@ func TestValidatePNStampsBatch(t *testing.T) {
 	}
 }
 
+func TestValidatePNStampsMultipMatchesSimple(t *testing.T) {
+	payloads := make([][]byte, 0, PNValidationPoolMinSize+3)
+	for n := 0; n < PNValidationPoolMinSize+3; n++ {
+		payload := make([]byte, LXMFOverhead+StampSize+8)
+		for i := range payload {
+			payload[i] = byte(i + n)
+		}
+		payloads = append(payloads, payload)
+	}
+
+	simple := ValidatePNStampsJobSimple(payloads, 0)
+	multip := ValidatePNStampsJobMultip(payloads, 0)
+
+	if len(simple) != len(multip) {
+		t.Fatalf("validated entry count mismatch: simple=%d multip=%d", len(simple), len(multip))
+	}
+	if len(simple) != len(payloads) {
+		t.Fatalf("expected every payload to validate at zero cost, got %d", len(simple))
+	}
+
+	indexByID := make(map[string][]any, len(multip))
+	for _, entry := range multip {
+		indexByID[string(entry[0].([]byte))] = entry
+	}
+
+	for _, entry := range simple {
+		id := string(entry[0].([]byte))
+		got, ok := indexByID[id]
+		if !ok {
+			t.Fatalf("missing validated entry for transient id %x", entry[0].([]byte))
+		}
+		if !bytes.Equal(got[1].([]byte), entry[1].([]byte)) {
+			t.Fatalf("lxm data mismatch for transient id %x", entry[0].([]byte))
+		}
+		if got[2].(int) != entry[2].(int) {
+			t.Fatalf("stamp value mismatch for transient id %x", entry[0].([]byte))
+		}
+		if !bytes.Equal(got[3].([]byte), entry[3].([]byte)) {
+			t.Fatalf("stamp data mismatch for transient id %x", entry[0].([]byte))
+		}
+	}
+}

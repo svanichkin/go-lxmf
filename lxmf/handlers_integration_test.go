@@ -19,6 +19,7 @@ func TestHandlersIntegrationWithRouter(t *testing.T) {
 	}
 	router.AutoPeer = true
 	router.AutoPeerMaxDepth = rns.PathfinderMaxHops
+	router.PropagationNode = true
 
 	handler := NewPropagationAnnounceHandler(router)
 	appData, err := umsgpack.Packb([]any{
@@ -42,3 +43,38 @@ func TestHandlersIntegrationWithRouter(t *testing.T) {
 	}
 }
 
+func TestHandlersIntegrationPathResponseDoesNotAutopeer(t *testing.T) {
+	storage := t.TempDir()
+	identity, err := rns.NewIdentity()
+	if err != nil {
+		t.Fatalf("new identity: %v", err)
+	}
+	router, err := NewLXMRouter(identity, storage)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	router.AutoPeer = true
+	router.AutoPeerMaxDepth = rns.PathfinderMaxHops
+	router.PropagationNode = true
+
+	handler := NewPropagationAnnounceHandler(router)
+	appData, err := umsgpack.Packb([]any{
+		false,
+		123,
+		true,
+		256,
+		1024,
+		[]any{16, 3, 18},
+		map[any]any{},
+	})
+	if err != nil {
+		t.Fatalf("pack app data: %v", err)
+	}
+
+	destHash := []byte("0011223344556678")
+	handler.ReceivedAnnounceWithPacketInfo(destHash, nil, appData, nil, true)
+
+	if router.Peers[string(destHash)] != nil {
+		t.Fatalf("expected path response announce to not autopeer")
+	}
+}

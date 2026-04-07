@@ -114,6 +114,10 @@ func DisplayNameFromAppData(appData []byte) string {
 		}
 	}
 
+	if !utf8.Valid(appData) {
+		rns.Log("Could not decode display name in included announce data: invalid UTF-8", rns.LOG_ERROR)
+		return ""
+	}
 	return string(appData)
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -740,9 +741,13 @@ func controlRequest(remote *rns.Identity, path string, data any, timeout float64
 	}
 	link.Identify(identity)
 
-	receipt := link.Request(path, data, nil, nil, nil, timeout)
-	if receipt == nil {
+	request := link.Request(path, data, nil, nil, nil, timeout)
+	if request == nil {
 		return nil, errors.New("control request could not be sent")
+	}
+	receipt, ok := request.(*rns.RequestReceipt)
+	if !ok || receipt == nil {
+		return nil, fmt.Errorf("unexpected control request receipt: %T", request)
 	}
 
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
@@ -783,22 +788,8 @@ func convertStatsMap(input map[any]any) map[string]any {
 	return out
 }
 
-func printStatusResponse(remote string, showStatus, showPeers bool, timeout float64) error {
-	targetIdentity, err := getRemoteIdentity(remote, timeout)
-	if err != nil {
-		return err
-	}
-	resp, err := controlRequest(targetIdentity, lxmf.StatsGetPath, nil, timeout)
-	if err != nil {
-		return err
-	}
-	rawMap, ok := resp.(map[any]any)
-	if !ok {
-		return fmt.Errorf("unexpected stats response: %T", resp)
-	}
-	stats := convertStatsMap(rawMap)
-
-	fmt.Printf("\nLXMF Propagation Node running on %v, uptime is %v\n", stats["destination_hash"], rns.PrettyTime(float64(toInt(stats["uptime"])), false, false))
+func renderStatusResponse(w io.Writer, stats map[string]any, showStatus, showPeers bool) {
+	fmt.Fprintf(w, "\nLXMF Propagation Node running on %v, uptime is %v\n", stats["destination_hash"], rns.PrettyTime(float64(toInt(stats["uptime"])), false, false))
 	if showStatus {
 		if ms, ok := stats["messagestore"].(map[string]any); ok {
 			bytes := toInt(ms["bytes"])
@@ -808,16 +799,16 @@ func printStatusResponse(remote string, showStatus, showPeers bool, timeout floa
 			if limit > 0 {
 				util = fmt.Sprintf("%.2f%%", float64(bytes)/float64(limit)*100)
 			}
-			fmt.Printf("Messagestore contains %d messages, %s (%s utilised of %s)\n", count, rns.PrettySize(float64(bytes)), util, rns.PrettySize(float64(limit)))
+			fmt.Fprintf(w, "Messagestore contains %d messages, %s (%s utilised of %s)\n", count, rns.PrettySize(float64(bytes)), util, rns.PrettySize(float64(limit)))
 		}
-		fmt.Printf("Required propagation stamp cost is %v, flexibility is %v\n", stats["target_stamp_cost"], stats["stamp_cost_flexibility"])
-		fmt.Printf("Peering cost is %v, max remote peering cost is %v\n", stats["peering_cost"], stats["max_peering_cost"])
+		fmt.Fprintf(w, "Required propagation stamp cost is %v, flexibility is %v\n", stats["target_stamp_cost"], stats["stamp_cost_flexibility"])
+		fmt.Fprintf(w, "Peering cost is %v, max remote peering cost is %v\n", stats["peering_cost"], stats["max_peering_cost"])
 		if fromStaticOnly, ok := stats["from_static_only"].(bool); ok && fromStaticOnly {
-			fmt.Printf("Accepting propagated messages from static peers only\n")
+			fmt.Fprintln(w, "Accepting propagated messages from static peers only")
 		} else {
-			fmt.Printf("Accepting propagated messages from all nodes\n")
+			fmt.Fprintln(w, "Accepting propagated messages from all nodes")
 		}
-		fmt.Printf("%s message limit, %s sync limit\n", rns.PrettySize(float64(toInt(stats["propagation_limit"])*1000)), rns.PrettySize(float64(toInt(stats["sync_limit"])*1000)))
+		fmt.Fprintf(w, "%s message limit, %s sync limit\n", rns.PrettySize(float64(toInt(stats["propagation_limit"])*1000)), rns.PrettySize(float64(toInt(stats["sync_limit"])*1000)))
 
 		peersMap, _ := stats["peers"].(map[string]any)
 		totalPeers := toInt(stats["total_peers"])
@@ -848,9 +839,9 @@ func printStatusResponse(remote string, showStatus, showPeers bool, timeout floa
 			peeredTxBytes += toInt(pm["tx_bytes"])
 		}
 
-		fmt.Printf("\nPeers   : %d total (peer limit is %d)\n", totalPeers, maxPeers)
-		fmt.Printf("          %d discovered, %d static\n", discoveredPeers, staticPeers)
-		fmt.Printf("          %d available, %d unreachable\n", availablePeers, unreachablePeers)
+		fmt.Fprintf(w, "\nPeers   : %d total (peer limit is %d)\n", totalPeers, maxPeers)
+		fmt.Fprintf(w, "          %d discovered, %d static\n", discoveredPeers, staticPeers)
+		fmt.Fprintf(w, "          %d available, %d unreachable\n", availablePeers, unreachablePeers)
 
 		unpeeredIncoming := toInt(stats["unpeered_propagation_incoming"])
 		unpeeredRxBytes := toInt(stats["unpeered_propagation_rx_bytes"])
@@ -866,31 +857,132 @@ func printStatusResponse(remote string, showStatus, showPeers bool, timeout floa
 			df = math.Round(raw*100) / 100
 		}
 
-		fmt.Printf("\nTraffic : %d messages received in total (%s)\n", totalIncoming, rns.PrettySize(float64(totalRxBytes)))
-		fmt.Printf("          %d messages received from peered nodes (%s)\n", peeredIncoming, rns.PrettySize(float64(peeredRxBytes)))
-		fmt.Printf("          %d messages received from unpeered nodes (%s)\n", unpeeredIncoming, rns.PrettySize(float64(unpeeredRxBytes)))
-		fmt.Printf("          %d messages transferred to peered nodes (%s)\n", peeredOutgoing, rns.PrettySize(float64(peeredTxBytes)))
-		fmt.Printf("          %d propagation messages received directly from clients\n", clientPropagationReceived)
-		fmt.Printf("          %d propagation messages served to clients\n", clientPropagationServed)
-		fmt.Printf("          Distribution factor is %v\n", df)
-		fmt.Println("")
+		fmt.Fprintf(w, "\nTraffic : %d messages received in total (%s)\n", totalIncoming, rns.PrettySize(float64(totalRxBytes)))
+		fmt.Fprintf(w, "          %d messages received from peered nodes (%s)\n", peeredIncoming, rns.PrettySize(float64(peeredRxBytes)))
+		fmt.Fprintf(w, "          %d messages received from unpeered nodes (%s)\n", unpeeredIncoming, rns.PrettySize(float64(unpeeredRxBytes)))
+		fmt.Fprintf(w, "          %d messages transferred to peered nodes (%s)\n", peeredOutgoing, rns.PrettySize(float64(peeredTxBytes)))
+		fmt.Fprintf(w, "          %d propagation messages received directly from clients\n", clientPropagationReceived)
+		fmt.Fprintf(w, "          %d propagation messages served to clients\n", clientPropagationServed)
+		fmt.Fprintf(w, "          Distribution factor is %v\n", df)
+		fmt.Fprintln(w, "")
 	}
+
 	if showPeers {
-		// Python prints a blank line before the peer list (even if no peers exist) when show_status is false.
 		if !showStatus {
-			fmt.Println("")
+			fmt.Fprintln(w, "")
 		}
 		if peers, ok := stats["peers"].(map[string]any); ok && len(peers) > 0 {
-			for _, entry := range peers {
+			for peerID, entry := range peers {
 				peerMap, ok := entry.(map[string]any)
 				if !ok {
 					continue
 				}
-				_ = peerMap
-				// Detailed per-peer output parity is implemented later.
+				ind := "  "
+				peerType := "Unknown peer    "
+				switch peerMap["type"] {
+				case "static":
+					peerType = "Static peer     "
+				case "discovered":
+					peerType = "Discovered peer "
+				}
+				status := "Unreachable"
+				if alive, ok := peerMap["alive"].(bool); ok && alive {
+					status = "Available"
+				}
+				h := math.Max(nowUnixSeconds()-float64(toInt(peerMap["last_heard"])), 0)
+				hops := toInt(peerMap["network_distance"])
+				hs := "hops unknown"
+				if hops != rns.PathfinderMaxHops {
+					if hops == 1 {
+						hs = "1 hop away"
+					} else {
+						hs = fmt.Sprintf("%d hops away", hops)
+					}
+				}
+				pm, _ := peerMap["messages"].(map[string]any)
+				pk := "Not generated"
+				if peerMap["peering_key"] != nil {
+					pk = fmt.Sprintf("Generated, value is %v", peerMap["peering_key"])
+				}
+				pc := peerMap["peering_cost"]
+				psc := peerMap["target_stamp_cost"]
+				psf := peerMap["stamp_cost_flexibility"]
+				if pc == nil {
+					pc = "unknown"
+				}
+				if psc == nil {
+					psc = "unknown"
+				}
+				if psf == nil {
+					psf = "unknown"
+				}
+				ls := "never synced"
+				if toInt(peerMap["last_sync_attempt"]) != 0 {
+					lsa := math.Max(nowUnixSeconds()-float64(toInt(peerMap["last_sync_attempt"])), 0)
+					ls = fmt.Sprintf("last synced %s ago", rns.PrettyTime(lsa, false, false))
+				}
+				sstr := rns.PrettySpeed(float64(toInt(peerMap["str"])))
+				sler := rns.PrettySpeed(float64(toInt(peerMap["ler"])))
+				stl := "Unknown"
+				if toInt(peerMap["transfer_limit"]) != 0 {
+					stl = rns.PrettySize(float64(toInt(peerMap["transfer_limit"]) * 1000))
+				}
+				ssl := "unknown"
+				if toInt(peerMap["sync_limit"]) != 0 {
+					ssl = rns.PrettySize(float64(toInt(peerMap["sync_limit"]) * 1000))
+				}
+				srxb := rns.PrettySize(float64(toInt(peerMap["rx_bytes"])))
+				stxb := rns.PrettySize(float64(toInt(peerMap["tx_bytes"])))
+				pmo := toInt(pm["offered"])
+				pmout := toInt(pm["outgoing"])
+				pmi := toInt(pm["incoming"])
+				pmuh := toInt(pm["unhandled"])
+				ar := math.Round(toFloat(peerMap["acceptance_rate"])*10000) / 100
+				nn := strings.TrimSpace(fmt.Sprint(peerMap["name"]))
+				if nn == "<nil>" {
+					nn = ""
+				}
+				nn = strings.NewReplacer("\n", "", "\r", "").Replace(nn)
+				if len(nn) > 45 {
+					nn = nn[:45] + "..."
+				}
+
+				fmt.Fprintf(w, "%s%s%s\n", ind, peerType, rns.PrettyHexRep([]byte(peerID)))
+				if nn != "" {
+					fmt.Fprintf(w, "%sName       : %s\n", ind+ind, nn)
+				}
+				fmt.Fprintf(w, "%sStatus     : %s, %s, last heard %s ago\n", ind+ind, status, hs, rns.PrettyTime(h, false, false))
+				fmt.Fprintf(w, "%sCosts      : Propagation %v (flex %v), peering %v\n", ind+ind, psc, psf, pc)
+				fmt.Fprintf(w, "%sSync key   : %s\n", ind+ind, pk)
+				fmt.Fprintf(w, "%sSpeeds     : %s STR, %s LER\n", ind+ind, sstr, sler)
+				fmt.Fprintf(w, "%sLimits     : %s message limit, %s sync limit\n", ind+ind, stl, ssl)
+				fmt.Fprintf(w, "%sMessages   : %d offered, %d outgoing, %d incoming, %.2f%% acceptance rate\n", ind+ind, pmo, pmout, pmi, ar)
+				fmt.Fprintf(w, "%sTraffic    : %s received, %s sent\n", ind+ind, srxb, stxb)
+				ms := "s"
+				if pmuh == 1 {
+					ms = ""
+				}
+				fmt.Fprintf(w, "%sSync state : %d unhandled message%s, %s\n", ind+ind, pmuh, ms, ls)
 			}
 		}
 	}
+}
+
+func printStatusResponse(remote string, showStatus, showPeers bool, timeout float64) error {
+	targetIdentity, err := getRemoteIdentity(remote, timeout)
+	if err != nil {
+		return err
+	}
+	resp, err := controlRequest(targetIdentity, lxmf.StatsGetPath, nil, timeout)
+	if err != nil {
+		return err
+	}
+	rawMap, ok := resp.(map[any]any)
+	if !ok {
+		return fmt.Errorf("unexpected stats response: %T", resp)
+	}
+	stats := convertStatsMap(rawMap)
+	renderStatusResponse(os.Stdout, stats, showStatus, showPeers)
 	return nil
 }
 
@@ -908,6 +1000,30 @@ func toInt(value any) int {
 	default:
 		return 0
 	}
+}
+
+func toFloat(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f
+	default:
+		return 0
+	}
+}
+
+func nowUnixSeconds() float64 {
+	return float64(time.Now().UnixNano()) / 1e9
 }
 
 func requestSyncPeer(target, remote string, timeout float64) error {

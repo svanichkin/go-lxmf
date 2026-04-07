@@ -1,6 +1,10 @@
 package lxmf
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/svanichkin/go-reticulum/rns"
+)
 
 func TestPeerRoundTripSerialization(t *testing.T) {
 	router := &LXMRouter{
@@ -55,3 +59,49 @@ func TestPeerRoundTripSerialization(t *testing.T) {
 	}
 }
 
+func TestPeerRoundTripSerializationPreservesZeroFlexibility(t *testing.T) {
+	storage := t.TempDir()
+	identity, err := rns.NewIdentity()
+	if err != nil {
+		t.Fatalf("new identity: %v", err)
+	}
+	router, err := NewLXMRouter(identity, storage)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	peerIdentity, err := rns.NewIdentity()
+	if err != nil {
+		t.Fatalf("peer identity: %v", err)
+	}
+	peerDest, err := rns.NewDestination(peerIdentity, rns.DestinationOUT, rns.DestinationSINGLE, AppName, "propagation")
+	if err != nil {
+		t.Fatalf("peer destination: %v", err)
+	}
+
+	if err := rns.IdentityRemember([]byte("packet"), peerDest.Hash(), peerIdentity.GetPublicKey(), nil); err != nil {
+		t.Fatalf("remember peer identity: %v", err)
+	}
+
+	peer := NewLXMPeer(router, peerDest.Hash(), PeerDefaultSyncStrategy)
+	peer.PeeringCost = 18
+	peer.PropagationStampCost = 16
+	peer.PropagationStampCostFlexibility = 0
+
+	raw, err := peer.ToBytes()
+	if err != nil {
+		t.Fatalf("to bytes: %v", err)
+	}
+
+	roundTrip, err := LXMPeerFromBytes(raw, router)
+	if err != nil {
+		t.Fatalf("from bytes: %v", err)
+	}
+
+	if roundTrip.PropagationStampCostFlexibility != 0 {
+		t.Fatalf("expected zero flexibility after round-trip, got %d", roundTrip.PropagationStampCostFlexibility)
+	}
+	if !roundTrip.stampCostsKnown() {
+		t.Fatalf("expected zero flexibility peer to remain sync-eligible after round-trip")
+	}
+}

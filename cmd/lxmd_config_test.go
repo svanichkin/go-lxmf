@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/svanichkin/configobj"
 )
@@ -96,5 +98,74 @@ func TestSetRemotePathsDetectsDir(t *testing.T) {
 	}
 	if configPath != filepath.Join(tmpDir, "config") {
 		t.Fatalf("unexpected configPath %s", configPath)
+	}
+}
+
+func TestRenderStatusResponseShowsPeerDetails(t *testing.T) {
+	now := time.Now().Unix()
+	stats := map[string]any{
+		"destination_hash": "deadbeef",
+		"uptime":           60,
+		"peers": map[string]any{
+			"aabbccdd": map[string]any{
+				"type":                   "static",
+				"alive":                  true,
+				"name":                   "Peer Name",
+				"last_heard":             int(now) - 5,
+				"network_distance":       1,
+				"peering_cost":           18,
+				"target_stamp_cost":      16,
+				"stamp_cost_flexibility": 3,
+				"peering_key":            22,
+				"last_sync_attempt":      int(now) - 10,
+				"str":                    1200,
+				"ler":                    2400,
+				"transfer_limit":         256,
+				"sync_limit":             1024,
+				"rx_bytes":               3000,
+				"tx_bytes":               5000,
+				"acceptance_rate":        0.5,
+				"messages": map[string]any{
+					"offered":   4,
+					"outgoing":  2,
+					"incoming":  3,
+					"unhandled": 1,
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	renderStatusResponse(&buf, stats, false, true)
+	out := buf.String()
+	if !strings.Contains(out, "Static peer") {
+		t.Fatalf("expected static peer section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Peer Name") {
+		t.Fatalf("expected peer name in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Sync key   : Generated, value is 22") {
+		t.Fatalf("expected sync key details in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Messages   : 4 offered, 2 outgoing, 3 incoming, 50.00% acceptance rate") {
+		t.Fatalf("expected per-peer message stats in output, got:\n%s", out)
+	}
+}
+
+func TestRenderStatusResponseWithoutStatusAddsPeerSpacing(t *testing.T) {
+	stats := map[string]any{
+		"destination_hash": "deadbeef",
+		"uptime":           60,
+		"peers":            map[string]any{},
+	}
+
+	var buf bytes.Buffer
+	renderStatusResponse(&buf, stats, false, true)
+	out := buf.String()
+	if !strings.HasPrefix(out, "\nLXMF Propagation Node") {
+		t.Fatalf("unexpected header output: %q", out)
+	}
+	if !strings.Contains(out, "\n\n") {
+		t.Fatalf("expected blank line before peers section when showStatus is false, got:\n%s", out)
 	}
 }

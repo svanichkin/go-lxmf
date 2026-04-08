@@ -740,6 +740,10 @@ func controlRequest(remote *rns.Identity, path string, data any, timeout float64
 		return nil, errors.New("control link establishment timed out")
 	}
 	link.Identify(identity)
+	// Give the remote side a brief window to process LINKIDENTIFY before the
+	// first control request, otherwise allow-listed handlers can race and reply
+	// with PeerErrorNoIdentity.
+	time.Sleep(50 * time.Millisecond)
 
 	request := link.Request(path, data, nil, nil, nil, timeout)
 	if request == nil {
@@ -760,7 +764,38 @@ func controlRequest(remote *rns.Identity, path string, data any, timeout float64
 	if receipt.Status() == rns.ReceiptFailed {
 		return nil, errors.New("control request failed")
 	}
-	return receipt.Response(), nil
+	response := receipt.Response()
+	if err := controlResponseError(response); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func controlResponseError(response any) error {
+	var code int
+	switch v := response.(type) {
+	case int:
+		code = v
+	case int64:
+		code = int(v)
+	case float64:
+		code = int(v)
+	default:
+		return nil
+	}
+
+	switch code {
+	case lxmf.PeerErrorNoIdentity:
+		return errors.New("control request rejected: remote side has not identified this link")
+	case lxmf.PeerErrorNoAccess:
+		return errors.New("control request rejected: access denied")
+	case lxmf.PeerErrorInvalidData:
+		return errors.New("control request rejected: invalid request data")
+	case lxmf.PeerErrorNotFound:
+		return errors.New("control request rejected: peer not found")
+	default:
+		return nil
+	}
 }
 
 func convertStatsValue(val any) any {

@@ -2,7 +2,10 @@ module github.com/svanichkin/go-lxmf
 
 go 1.26.1
 
-require github.com/svanichkin/go-reticulum v1.1.4
+require (
+	github.com/svanichkin/configobj v0.0.1
+	github.com/svanichkin/go-reticulum v1.1.49
+)
 
 require (
 	github.com/JuulLabs-OSS/cbgo v0.0.2 // indirect
@@ -20,8 +23,8 @@ require (
 	github.com/saltosystems/winrt-go v0.0.0-20260317170058-9c2fec580d96 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/soypat/cyw43439 v0.0.0-20260321224103-c7bb279d9c72 // indirect
+	github.com/soypat/lneto v0.0.0-20260331220408-22c7e6c9d80b // indirect
 	github.com/soypat/seqs v0.0.0-20260125140838-2c1c6b1bd69e // indirect
-	github.com/svanichkin/configobj v0.0.1 // indirect
 	github.com/svanichkin/i2plib v0.0.1 // indirect
 	github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07 // indirect
 	github.com/tinygo-org/cbgo v0.0.4 // indirect

@@ -4,8 +4,10 @@ go 1.26.1
 
 require (
 	github.com/svanichkin/configobj v0.0.1
-	github.com/svanichkin/go-reticulum v1.1.49
+	github.com/svanichkin/go-reticulum v1.1.412
 )
+
+replace github.com/svanichkin/go-reticulum => ../go-reticulum
 
 require (
 	github.com/JuulLabs-OSS/cbgo v0.0.2 // indirect

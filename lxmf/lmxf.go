@@ -89,7 +89,6 @@ func DisplayNameFromAppData(appData []byte) string {
 	if appData[0] >= 0x90 && appData[0] <= 0x9f || appData[0] == 0xdc {
 		var peerData []any
 		if err := umsgpack.Unpackb(appData, &peerData); err != nil {
-			rns.Log(fmt.Sprintf("Could not decode display name in included announce data. The contained exception was: %v", err), rns.LOG_ERROR)
 			return ""
 		}
 		if len(peerData) < 1 || peerData[0] == nil {
@@ -98,24 +97,17 @@ func DisplayNameFromAppData(appData []byte) string {
 		switch name := peerData[0].(type) {
 		case []byte:
 			if !utf8.Valid(name) {
-				rns.Log("Could not decode display name in included announce data: invalid UTF-8", rns.LOG_ERROR)
 				return ""
 			}
 			return string(name)
 		case string:
-			if !utf8.ValidString(name) {
-				rns.Log("Could not decode display name in included announce data: invalid UTF-8", rns.LOG_ERROR)
-				return ""
-			}
 			return name
 		default:
-			rns.Log("Could not decode display name in included announce data: invalid type", rns.LOG_ERROR)
 			return ""
 		}
 	}
 
 	if !utf8.Valid(appData) {
-		rns.Log("Could not decode display name in included announce data: invalid UTF-8", rns.LOG_ERROR)
 		return ""
 	}
 	return string(appData)
@@ -170,35 +162,14 @@ func PNNameFromAppData(appData []byte) string {
 		return ""
 	}
 	meta, ok := data[6].(map[any]any)
+	if !ok {
+		return ""
+	}
 	var name any
-	if ok {
-		if v, ok := meta[PNMetaName]; ok {
-			name = v
-		} else {
-			for k, v := range meta {
-				if keyInt, ok := asInt(k); ok && keyInt == PNMetaName {
-					name = v
-					break
-				}
-				switch key := k.(type) {
-				case []byte:
-					if len(key) == 1 && int(key[0]) == PNMetaName {
-						name = v
-						break
-					}
-				case string:
-					if len(key) == 1 && int(key[0]) == PNMetaName {
-						name = v
-						break
-					}
-				}
-			}
-		}
-	} else if metaStr, ok := data[6].(map[string]any); ok {
-		if v, ok := metaStr[fmt.Sprintf("%d", PNMetaName)]; ok {
-			name = v
-		} else if v, ok := metaStr[string([]byte{byte(PNMetaName)})]; ok {
-			name = v
+	for key, value := range meta {
+		if keyInt, ok := asInt(key); ok && keyInt == PNMetaName {
+			name = value
+			break
 		}
 	}
 	if name == nil {
@@ -211,9 +182,6 @@ func PNNameFromAppData(appData []byte) string {
 		}
 		return string(v)
 	case string:
-		if !utf8.ValidString(v) {
-			return ""
-		}
 		return v
 	default:
 		return ""

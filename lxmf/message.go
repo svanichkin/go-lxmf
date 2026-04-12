@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"unicode/utf8"
 
 	"github.com/svanichkin/go-reticulum/rns"
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
@@ -18,6 +19,7 @@ const (
 	MessageOutbound   = 0x01
 	MessageSending    = 0x02
 	MessageSent       = 0x04
+	MessagePaper      = 0x05
 	MessageDelivered  = 0x08
 	MessageRejected   = 0xFD
 	MessageCancelled  = 0xFE
@@ -28,6 +30,7 @@ const (
 	RepresentationUnknown  = 0x00
 	RepresentationPacket   = 0x01
 	RepresentationResource = 0x02
+	RepresentationPaper    = 0x05
 )
 
 const (
@@ -208,6 +211,10 @@ func (m *LXMessage) SetTitleFromBytes(title []byte) {
 }
 
 func (m *LXMessage) TitleAsString() string {
+	if !utf8.Valid(m.Title) {
+		rns.Log(fmt.Sprintf("%s could not decode message title as string: invalid UTF-8", m.String()), rns.LOG_DEBUG)
+		return ""
+	}
 	return string(m.Title)
 }
 
@@ -220,6 +227,10 @@ func (m *LXMessage) SetContentFromBytes(content []byte) {
 }
 
 func (m *LXMessage) ContentAsString() string {
+	if !utf8.Valid(m.Content) {
+		rns.Log(fmt.Sprintf("%s could not decode message content as string: invalid UTF-8", m.String()), rns.LOG_DEBUG)
+		return ""
+	}
 	return string(m.Content)
 }
 
@@ -478,7 +489,7 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 		contentSize = len(m.PaperPacked)
 		if contentSize <= paperContentLimit {
 			m.Method = m.DesiredMethod
-			m.Representation = MethodPaper
+			m.Representation = RepresentationPaper
 		} else {
 			return errors.New("LXMessage desired paper delivery method, but content exceeds paper message maximum size")
 		}
@@ -593,7 +604,7 @@ func (m *LXMessage) markPropagated(_ *rns.PacketReceipt) {
 
 func (m *LXMessage) markPaperGenerated(_ *rns.PacketReceipt) {
 	rns.Log("Paper message generation succeeded for "+m.String(), rns.LOG_DEBUG)
-	m.State = MethodPaper
+	m.State = MessagePaper
 	m.Progress = 1.0
 	m.invokeDeliveryCallback()
 }

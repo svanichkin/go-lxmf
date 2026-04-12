@@ -1228,8 +1228,13 @@ func (r *LXMRouter) ProcessOutbound() {
 							}
 						}
 					} else if link.Status == rns.LinkClosed {
-						rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" was closed", rns.LOG_DEBUG)
-						rns.TransportRequestPath(msg.DestinationHash)
+						if link.ActivatedAt().IsZero() {
+							rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" was never activated, retrying path request...", rns.LOG_DEBUG)
+							rns.TransportRequestPath(msg.DestinationHash)
+						} else {
+							rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" was closed unexpectedly, retrying path request...", rns.LOG_DEBUG)
+							rns.TransportRequestPath(msg.DestinationHash)
+						}
 						msg.SetDeliveryDestination(nil)
 						delete(r.DirectLinks, string(msg.DestinationHash))
 						delete(r.BackchannelLinks, string(msg.DestinationHash))
@@ -2160,6 +2165,7 @@ func (r *LXMRouter) DeliveryResourceConcluded(res *rns.Resource) {
 	if res == nil {
 		return
 	}
+	rns.Log("Transfer concluded for LXMF delivery resource "+res.String(), rns.LOG_DEBUG)
 	if res.Status() == rns.ResourceComplete {
 		link := res.Link()
 		var ratchetID []byte
@@ -2192,6 +2198,7 @@ func (r *LXMRouter) DeliveryRemoteIdentified(link *rns.Link, identity *rns.Ident
 	hash := rns.HashFromNameAndIdentity("lxmf.delivery", identity.Hash)
 	if hash != nil {
 		r.BackchannelLinks[string(hash)] = link
+		rns.Log(fmt.Sprintf("Backchannel became available for %s on delivery link %s", rns.PrettyHexRep(hash), link), rns.LOG_DEBUG)
 	}
 }
 

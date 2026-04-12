@@ -37,7 +37,6 @@ func StampWorkblock(material []byte, expandRounds int) []byte {
 		expandRounds = WorkblockExpandRounds
 	}
 
-	start := time.Now()
 	workblock := make([]byte, 0, expandRounds*256)
 	for n := 0; n < expandRounds; n++ {
 		nonce, err := umsgpack.Packb(n)
@@ -51,8 +50,6 @@ func StampWorkblock(material []byte, expandRounds int) []byte {
 		}
 		workblock = append(workblock, block...)
 	}
-	_ = start
-
 	return workblock
 }
 
@@ -122,7 +119,7 @@ func ValidatePNStampsJobMultip(transientList [][]byte, targetCost int) [][]any {
 	rns.Log(fmt.Sprintf("Validating %d stamps using %d workers...", len(transientList), poolCount), rns.LOG_VERBOSE)
 
 	jobs := make(chan []byte)
-	results := make(chan []any)
+	results := make(chan []any, poolCount)
 	var wg sync.WaitGroup
 	worker := func() {
 		defer wg.Done()
@@ -152,6 +149,7 @@ func ValidatePNStampsJobMultip(transientList [][]byte, targetCost int) [][]any {
 	for res := range results {
 		validated = append(validated, []any{res[0], res[1], res[2], res[3]})
 	}
+	rns.Log(fmt.Sprintf("Validation pool completed for %d stamps", len(transientList)), rns.LOG_VERBOSE)
 	return validated
 }
 

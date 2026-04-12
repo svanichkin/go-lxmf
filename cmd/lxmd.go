@@ -61,7 +61,7 @@ autopeer = yes
 # The maximum peering depth (in hops) for
 # automatically peered nodes.
 
-autopeer_maxdepth = 4
+autopeer_maxdepth = 6
 
 # The maximum amount of storage to use for
 # the LXMF Propagation Node message store,
@@ -230,7 +230,6 @@ type activeConfiguration struct {
 	NodeAnnounceInterval               time.Duration
 	MessageStorageLimitMB              int
 	PropagationTransferMaxAcceptedSize int
-	PropagationMessageMaxAcceptedSize  int
 	PropagationSyncMaxAcceptedSize     int
 	PropagationStampCostTarget         int
 	PropagationStampCostFlexibility    int
@@ -370,7 +369,11 @@ func applyConfig() error {
 	activeConfig.NodeAnnounceInterval = time.Duration(intKey("propagation", "announce_interval", 0)) * time.Minute
 	activeConfig.MessageStorageLimitMB = int(floatKey("propagation", "message_storage_limit", 500))
 	activeConfig.PropagationTransferMaxAcceptedSize = int(floatKey("propagation", "propagation_transfer_max_accepted_size", 256))
-	activeConfig.PropagationMessageMaxAcceptedSize = int(floatKey("propagation", "propagation_message_max_accepted_size", 256))
+	if sec := getSection("propagation"); sec != nil {
+		if _, ok := sec.Get("propagation_message_max_accepted_size"); ok {
+			activeConfig.PropagationTransferMaxAcceptedSize = int(floatKey("propagation", "propagation_message_max_accepted_size", 256))
+		}
+	}
 	activeConfig.PropagationSyncMaxAcceptedSize = int(floatKey("propagation", "propagation_sync_max_accepted_size", 256*40))
 	activeConfig.PropagationStampCostTarget = intKey("propagation", "propagation_stamp_cost_target", 16)
 	activeConfig.PropagationStampCostFlexibility = intKey("propagation", "propagation_stamp_cost_flexibility", 3)

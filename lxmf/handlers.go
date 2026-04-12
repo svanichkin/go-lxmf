@@ -33,16 +33,7 @@ func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, annou
 	if h.Router == nil {
 		return
 	}
-	if len(appData) > 0 && ((appData[0] >= 0x90 && appData[0] <= 0x9f) || appData[0] == 0xdc) {
-		var peerData []any
-		if err := umsgpack.Unpackb(appData, &peerData); err != nil {
-			rns.Log("An error occurred while trying to decode announced stamp cost. The contained exception was: "+err.Error(), rns.LOG_ERROR)
-		} else if len(peerData) >= 2 {
-			if stampCost, ok := asInt(peerData[1]); ok {
-				h.Router.UpdateStampCost(destinationHash, &stampCost)
-			}
-		}
-	} else if stampCost, ok := StampCostFromAppData(appData); ok {
+	if stampCost, ok := StampCostFromAppData(appData); ok {
 		h.Router.UpdateStampCost(destinationHash, &stampCost)
 	}
 

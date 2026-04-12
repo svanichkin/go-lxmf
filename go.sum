@@ -59,8 +59,6 @@ github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOf
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/svanichkin/configobj v0.0.1 h1:/4NP2Mgn9ilQMI/UkfnGkDQjYcl6n4m28SfxVPC9icI=
 github.com/svanichkin/configobj v0.0.1/go.mod h1:jJMehIdWQ8kkeiP4EHnZ9oYshhEvpoIEl7dGyYmmBYQ=
-github.com/svanichkin/go-reticulum v1.1.49 h1:WXsSp24jhb1nJb2yIm6F4cnIIAI6SfAi++07gl+gw7w=
-github.com/svanichkin/go-reticulum v1.1.49/go.mod h1:aGSqT/p+z2cIRrCxUsW+joMgVYAqhaFh2tslQacsHB0=
 github.com/svanichkin/i2plib v0.0.1 h1:/H/tI3ooLyosEiuKcUJCNznmx/VA77Cxct/aYOfKqPI=
 github.com/svanichkin/i2plib v0.0.1/go.mod h1:ZdZ16JfKVIkJMVHpCMTrujq7tgdkK53cVqpEL7XPWAU=
 github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07 h1:UyzmZLoiDWMRywV4DUYb9Fbt8uiOSooupjTq10vpvnU=

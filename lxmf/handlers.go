@@ -2,6 +2,7 @@ package lxmf
 
 import (
 	"bytes"
+	"fmt"
 	"time"
 
 	"github.com/svanichkin/go-reticulum/rns"
@@ -31,17 +32,10 @@ func (h *DeliveryAnnounceHandler) ReceivePathResponses() bool {
 }
 
 func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte) {
-	if h.Router == nil {
-		return
-	}
-	if stampCost := StampCostFromAppData(appData); stampCost != nil {
-		h.Router.UpdateStampCost(destinationHash, stampCost)
-	}
+	stampCost := StampCostFromAppData(appData)
+	h.Router.UpdateStampCost(destinationHash, stampCost)
 
 	for _, msg := range h.Router.PendingOutbound {
-		if msg == nil {
-			continue
-		}
 		if bytes.Equal(destinationHash, msg.DestinationHash) {
 			if msg.Method == MethodDirect || msg.Method == MethodOpportunistic {
 				msg.NextDeliveryAttempt = float64(time.Now().UnixNano()) / 1e9
@@ -83,6 +77,13 @@ func (h *PropagationAnnounceHandler) ReceivedAnnounce(destinationHash []byte, an
 }
 
 func (h *PropagationAnnounceHandler) ReceivedAnnounceWithPacketInfo(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte, _ []byte, isPathResponse bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			rns.Log("Error while evaluating propagation node announce, ignoring announce.", rns.LOG_DEBUG)
+			rns.Log("The contained exception was: "+fmt.Sprint(recovered), rns.LOG_DEBUG)
+		}
+	}()
+
 	if h.Router == nil || !h.Router.PropagationNode || len(appData) == 0 {
 		return
 	}

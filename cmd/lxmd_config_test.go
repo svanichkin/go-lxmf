@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,32 +10,6 @@ import (
 
 	"github.com/svanichkin/configobj"
 )
-
-func TestParseCommaList(t *testing.T) {
-	out := parseCommaList("foo,  bar , ,baz")
-	if len(out) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(out))
-	}
-	if out[1] != "bar" {
-		t.Fatalf("expected trimmed bar, got %q", out[1])
-	}
-}
-
-func TestLoadHashList(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "ignored")
-	content := "abcd\n\ntweet\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write ignored: %v", err)
-	}
-	list := loadHashList(path)
-	if len(list) != 1 {
-		t.Fatalf("expected 1 decoded hash, got %d", len(list))
-	}
-	if hex.EncodeToString(list[0]) != "abcd" {
-		t.Fatalf("unexpected hash: %x", list[0])
-	}
-}
 
 func TestApplyConfigReadsSections(t *testing.T) {
 	origConfig := lxmdConfig
@@ -85,19 +58,6 @@ control_allowed = bbaa, ccdd
 	}
 	if len(activeConfig.ControlAllowedIdentities) != 2 {
 		t.Fatalf("expected control identities, got %v", activeConfig.ControlAllowedIdentities)
-	}
-}
-
-func TestSetRemotePathsDetectsDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "config")
-	os.WriteFile(configFile, []byte("[]"), 0o600)
-	_, err := setRemotePaths(tmpDir)
-	if err != nil {
-		t.Fatalf("set remote paths: %v", err)
-	}
-	if configPath != filepath.Join(tmpDir, "config") {
-		t.Fatalf("unexpected configPath %s", configPath)
 	}
 }
 

@@ -591,17 +591,8 @@ func (r *LXMRouter) InformationStorageSize() *int64 {
 	return nil
 }
 
-func (r *LXMRouter) SetMessageStorageLimit(kb, mb, gb int) error {
-	limit := int64(0)
-	if kb > 0 {
-		limit += int64(kb) * 1000
-	}
-	if mb > 0 {
-		limit += int64(mb) * 1000 * 1000
-	}
-	if gb > 0 {
-		limit += int64(gb) * 1000 * 1000 * 1000
-	}
+func (r *LXMRouter) SetMessageStorageLimit(kb, mb, gb float64) error {
+	limit := kb*1000 + mb*1000*1000 + gb*1000*1000*1000
 	if limit == 0 {
 		return errors.New("cannot set LXMF information storage limit to 0")
 	}

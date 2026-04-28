@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +40,7 @@ func (t *lxmdLoopbackTransport) Outbound(p *rns.Packet) bool {
 		rns.Receipts = append(rns.Receipts, rc)
 	}
 
-	in := rns.NewPacket(nil, p.Raw)
+	in := rns.NewPacket(nil, p.Raw, 0, 0, 0, 0, nil, nil, false, 0)
 	if in == nil || !in.Unpack() {
 		return false
 	}
@@ -81,7 +83,7 @@ func (t *lxmdLoopbackTransport) Outbound(p *rns.Packet) bool {
 						deadline := time.Now().Add(200 * time.Millisecond)
 						for time.Now().Before(deadline) {
 							if findInitiatorLinkByID(destHash) != nil {
-								retry := rns.NewPacket(nil, rawCopy)
+								retry := rns.NewPacket(nil, rawCopy, 0, 0, 0, 0, nil, nil, false, 0)
 								if retry == nil || !retry.Unpack() {
 									return
 								}
@@ -116,7 +118,7 @@ func (t *lxmdLoopbackTransport) Outbound(p *rns.Packet) bool {
 	t.mu.Unlock()
 	for _, raws := range pending {
 		for _, raw := range raws {
-			pkt := rns.NewPacket(nil, raw)
+			pkt := rns.NewPacket(nil, raw, 0, 0, 0, 0, nil, nil, false, 0)
 			if pkt == nil || !pkt.Unpack() {
 				continue
 			}
@@ -216,6 +218,7 @@ func setupLXMDTestGlobals(t *testing.T) {
 	oldDestinations := append([]*rns.Destination(nil), rns.Destinations...)
 	oldReceipts := append([]*rns.PacketReceipt(nil), rns.Receipts...)
 	oldLocalClients := append([]*rns.Interface(nil), rns.LocalClientInterfaces...)
+	oldInterfaces := append([]*rns.Interface(nil), rns.Interfaces...)
 
 	oldConfigPath := configPath
 	oldIgnoredPath := ignoredPath
@@ -235,6 +238,7 @@ func setupLXMDTestGlobals(t *testing.T) {
 		rns.Destinations = oldDestinations
 		rns.Receipts = oldReceipts
 		rns.LocalClientInterfaces = oldLocalClients
+		rns.Interfaces = oldInterfaces
 
 		configPath = oldConfigPath
 		ignoredPath = oldIgnoredPath
@@ -260,6 +264,7 @@ func setupLXMDTestGlobals(t *testing.T) {
 	rns.Destinations = nil
 	rns.Receipts = nil
 	rns.LocalClientInterfaces = nil
+	rns.Interfaces = []*rns.Interface{rns.Transport.(*lxmdLoopbackTransport).ifc}
 }
 
 func newLXMDTestNode(t *testing.T, displayName string, propagation bool, controlAllowed [][]byte, deliveryCB func(*lxmf.LXMessage)) *lxmdTestNode {
@@ -269,6 +274,7 @@ func newLXMDTestNode(t *testing.T, displayName string, propagation bool, control
 	if err != nil {
 		t.Fatalf("new identity: %v", err)
 	}
+	rns.IdentityRemember(nil, id.Hash, id.GetPublicKey(), nil)
 	storage, err := os.MkdirTemp("", "lxmd-node-*")
 	if err != nil {
 		t.Fatalf("temp storage dir: %v", err)
@@ -290,7 +296,7 @@ func newLXMDTestNode(t *testing.T, displayName string, propagation bool, control
 	if deliveryDest == nil {
 		t.Fatalf("register delivery identity returned nil")
 	}
-	_ = rns.IdentityRemember(nil, deliveryDest.Hash, id.GetPublicKey(), nil)
+	rns.IdentityRemember(nil, deliveryDest.Hash, id.GetPublicKey(), nil)
 
 	if propagation {
 		if err := router.EnablePropagation(); err != nil {
@@ -316,9 +322,36 @@ func newLXMDTestNode(t *testing.T, displayName string, propagation bool, control
 		t.Fatalf("mkdir messages dir: %v", err)
 	}
 	if node.controlDest != nil {
-		_ = rns.IdentityRemember(nil, node.controlDest.Hash, id.GetPublicKey(), nil)
+		rns.IdentityRemember(nil, node.controlDest.Hash, id.GetPublicKey(), nil)
 	}
 	return node
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = old
+	}()
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
 }
 
 func waitForInboundFile(t *testing.T, dir string) string {
@@ -408,21 +441,16 @@ func TestLXMDControlRequestStatsBetweenTwoNodes(t *testing.T) {
 	relaxControlAccessForTest(t, remote)
 
 	identity = requester.identity
-	resp, err := controlRequest(remote.identity, lxmf.StatsGetPath, nil, 3)
-	if err != nil {
-		t.Fatalf("controlRequest stats: %v", err)
+	out := captureStdout(t, func() {
+		if err := printStatusResponse(hex.EncodeToString(remote.identity.Hash), true, true, 3); err != nil {
+			t.Fatalf("printStatusResponse stats: %v", err)
+		}
+	})
+	if !strings.Contains(out, "LXMF Propagation Node running on") {
+		t.Fatalf("expected stats output, got:\n%s", out)
 	}
-
-	stats, ok := resp.(map[any]any)
-	if !ok {
-		t.Fatalf("unexpected stats response type: %T", resp)
-	}
-	converted := convertStatsMap(stats)
-	if converted["destination_hash"] == nil {
-		t.Fatalf("expected destination_hash in stats response")
-	}
-	if converted["uptime"] == nil {
-		t.Fatalf("expected uptime in stats response")
+	if !strings.Contains(out, "uptime is") {
+		t.Fatalf("expected uptime in stats output, got:\n%s", out)
 	}
 }
 
@@ -544,11 +572,9 @@ func TestLXMDDaemonPropagationNodeMessageDownloadBetweenTwoNodes(t *testing.T) {
 	if err := client.router.SetOutboundPropagationNode(pn.router.PropagationDestination.Hash); err != nil {
 		t.Fatalf("set outbound propagation node: %v", err)
 	}
-	if err := rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash, pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData()); err != nil {
-		t.Fatalf("remember propagation node identity: %v", err)
-	}
+	rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash, pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData())
 	waitForCondition(t, 2*time.Second, func() bool {
-		return rns.TransportHasPath(pn.router.PropagationDestination.Hash)
+		return rns.HasPath(pn.router.PropagationDestination.Hash)
 	}, "path to propagation node")
 
 	msg, err := lxmf.NewLXMessage(client.deliveryDest, pn.deliveryDest, "hello via propagation", "pn-test", nil, lxmf.MethodPropagated, nil, nil, nil, false)
@@ -560,8 +586,8 @@ func TestLXMDDaemonPropagationNodeMessageDownloadBetweenTwoNodes(t *testing.T) {
 		t.Fatalf("pack propagated message: %v", err)
 	}
 	lxmfData := append(append([]byte{}, msg.Packed[:lxmf.DestinationLength]...), msg.PNEncryptedData...)
-	if handled, dup := pn.router.LXMPropagation(lxmfData, nil, 0, make([]byte, lxmf.StampSize), false, false); !handled || dup {
-		t.Fatalf("expected propagation node to store propagated message, handled=%v dup=%v", handled, dup)
+	if _, dup := pn.router.LXMPropagation(lxmfData, nil, 0, make([]byte, lxmf.StampSize), nil, nil, false, false); dup {
+		t.Fatalf("expected propagation node to store propagated message, dup=%v", dup)
 	}
 
 	client.router.RequestMessagesFromPropagationNode(client.identity, nil)
@@ -602,11 +628,9 @@ func TestLXMDDaemonPropagationUploadToNodeBetweenTwoNodes(t *testing.T) {
 	if err := sender.router.SetOutboundPropagationNode(pn.router.PropagationDestination.Hash); err != nil {
 		t.Fatalf("set sender outbound propagation node: %v", err)
 	}
-	if err := rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash, pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData()); err != nil {
-		t.Fatalf("remember propagation node identity: %v", err)
-	}
+	rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash, pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData())
 	waitForCondition(t, 2*time.Second, func() bool {
-		return rns.TransportHasPath(pn.router.PropagationDestination.Hash)
+		return rns.HasPath(pn.router.PropagationDestination.Hash)
 	}, "path to propagation node")
 	sender.router.RequestMessagesFromPropagationNode(sender.identity, nil)
 	waitForCondition(t, 3*time.Second, func() bool {
@@ -621,9 +645,7 @@ func TestLXMDDaemonPropagationUploadToNodeBetweenTwoNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("receiver destination: %v", err)
 	}
-	if err := rns.IdentityRemember(nil, receiverDest.Hash, receiverIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember receiver identity: %v", err)
-	}
+	rns.IdentityRemember(nil, receiverDest.Hash, receiverIdentity.GetPublicKey(), nil)
 
 	msg, err := lxmf.NewLXMessage(receiverDest, sender.deliveryDest, "hello full propagation round-trip", "pn-roundtrip", nil, lxmf.MethodPropagated, nil, nil, nil, false)
 	if err != nil {
@@ -669,9 +691,9 @@ func TestLXMDControlRequestAccessDeniedBetweenTwoNodes(t *testing.T) {
 	}
 
 	identity = requester.identity
-	_, err := controlRequest(remote.identity, lxmf.StatsGetPath, nil, 3)
+	err := printStatusResponse(hex.EncodeToString(remote.identity.Hash), true, true, 3)
 	if err == nil {
-		t.Fatalf("expected controlRequest to fail when requester is not allow-listed")
+		t.Fatalf("expected printStatusResponse to fail when requester is not allow-listed")
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("unexpected error: %v", err)

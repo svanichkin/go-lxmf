@@ -217,8 +217,8 @@ loglevel = 4
 type activeConfiguration struct {
 	DisplayName                     string
 	PeerAnnounceAtStart             bool
-	PeerAnnounceInterval            time.Duration
-	DeliveryTransferMaxAcceptedSize int
+	PeerAnnounceInterval            *time.Duration
+	DeliveryTransferMaxAcceptedSize float64
 	OnInbound                       string
 
 	EnablePropagationNode              bool
@@ -226,11 +226,11 @@ type activeConfiguration struct {
 	AuthRequired                       bool
 	NodeAnnounceAtStart                bool
 	AutoPeer                           bool
-	AutoPeerMaxDepth                   int
-	NodeAnnounceInterval               time.Duration
-	MessageStorageLimitMB              int
-	PropagationTransferMaxAcceptedSize int
-	PropagationSyncMaxAcceptedSize     int
+	AutoPeerMaxDepth                   *int
+	NodeAnnounceInterval               *time.Duration
+	MessageStorageLimitMB              float64
+	PropagationTransferMaxAcceptedSize float64
+	PropagationSyncMaxAcceptedSize     float64
 	PropagationStampCostTarget         int
 	PropagationStampCostFlexibility    int
 	PeeringCost                        int
@@ -239,7 +239,7 @@ type activeConfiguration struct {
 	ControlAllowedIdentities           []string
 	StaticPeers                        [][]byte
 	FromStaticOnly                     bool
-	MaxPeers                           int
+	MaxPeers                           *int
 
 	IgnoredLXMFDestinations [][]byte
 	AllowedIdentities       [][]byte
@@ -266,153 +266,455 @@ var (
 	lastNodeAnnounce time.Time
 )
 
-func getSection(name string) *configobj.Section {
-	if lxmdConfig == nil {
-		return nil
-	}
-	return lxmdConfig.Section(name)
-}
-
-func stringKey(section, key, def string) string {
-	sec := getSection(section)
-	if sec == nil {
-		return def
-	}
-	if value, ok := sec.Get(key); ok && value != "" {
-		return value
-	}
-	return def
-}
-
-func boolKey(section, key string, def bool) bool {
-	sec := getSection(section)
-	if sec == nil {
-		return def
-	}
-	if value, err := sec.AsBool(key); err == nil {
-		return value
-	}
-	return def
-}
-
-func intKey(section, key string, def int) int {
-	sec := getSection(section)
-	if sec == nil {
-		return def
-	}
-	if value, err := sec.AsInt(key); err == nil {
-		return value
-	}
-	return def
-}
-
-func floatKey(section, key string, def float64) float64 {
-	sec := getSection(section)
-	if sec == nil {
-		return def
-	}
-	if value, err := sec.AsFloat(key); err == nil {
-		return value
-	}
-	return def
-}
-
-func parseCommaList(value string) []string {
-	var out []string
-	for _, part := range strings.Split(value, ",") {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
-func loadHashList(path string) [][]byte {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer file.Close()
-
-	var hashes [][]byte
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if decoded, err := hex.DecodeString(line); err == nil {
-			hashes = append(hashes, decoded)
-		}
-	}
-	return hashes
-}
-
 func applyConfig() error {
 	if lxmdConfig == nil {
 		return errors.New("configuration missing")
 	}
 
-	activeConfig.DisplayName = stringKey("lxmf", "display_name", "Anonymous Peer")
-	activeConfig.PeerAnnounceAtStart = boolKey("lxmf", "announce_at_start", false)
-	activeConfig.PeerAnnounceInterval = time.Duration(intKey("lxmf", "announce_interval", 0)) * time.Minute
-	activeConfig.DeliveryTransferMaxAcceptedSize = int(floatKey("lxmf", "delivery_transfer_max_accepted_size", 1000))
-	activeConfig.OnInbound = stringKey("lxmf", "on_inbound", "")
-
-	activeConfig.EnablePropagationNode = boolKey("propagation", "enable_node", false)
-	activeConfig.NodeName = stringKey("propagation", "node_name", "")
-	activeConfig.AuthRequired = boolKey("propagation", "auth_required", false)
-	activeConfig.NodeAnnounceAtStart = boolKey("propagation", "announce_at_start", false)
-	activeConfig.AutoPeer = boolKey("propagation", "autopeer", true)
-	activeConfig.AutoPeerMaxDepth = intKey("propagation", "autopeer_maxdepth", 4)
-	activeConfig.NodeAnnounceInterval = time.Duration(intKey("propagation", "announce_interval", 0)) * time.Minute
-	activeConfig.MessageStorageLimitMB = int(floatKey("propagation", "message_storage_limit", 500))
-	activeConfig.PropagationTransferMaxAcceptedSize = int(floatKey("propagation", "propagation_transfer_max_accepted_size", 256))
-	if sec := getSection("propagation"); sec != nil {
-		if _, ok := sec.Get("propagation_message_max_accepted_size"); ok {
-			activeConfig.PropagationTransferMaxAcceptedSize = int(floatKey("propagation", "propagation_message_max_accepted_size", 256))
+	activeConfig.DisplayName = "Anonymous Peer"
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("lxmf"); sec != nil {
+			if value, ok := sec.Get("display_name"); ok {
+				activeConfig.DisplayName = value
+			}
 		}
 	}
-	activeConfig.PropagationSyncMaxAcceptedSize = int(floatKey("propagation", "propagation_sync_max_accepted_size", 256*40))
-	activeConfig.PropagationStampCostTarget = intKey("propagation", "propagation_stamp_cost_target", 16)
-	activeConfig.PropagationStampCostFlexibility = intKey("propagation", "propagation_stamp_cost_flexibility", 3)
-	activeConfig.PeeringCost = intKey("propagation", "peering_cost", 18)
-	activeConfig.RemotePeeringCostMax = intKey("propagation", "remote_peering_cost_max", 26)
-	activeConfig.PrioritisedDestinations = parseCommaList(stringKey("propagation", "prioritise_destinations", ""))
-	activeConfig.ControlAllowedIdentities = parseCommaList(stringKey("propagation", "control_allowed", ""))
+	activeConfig.PeerAnnounceAtStart = false
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("lxmf"); sec != nil {
+			if _, ok := sec.Get("announce_at_start"); ok {
+				if value, err := sec.AsBool("announce_at_start"); err != nil {
+					return fmt.Errorf("invalid lxmf.announce_at_start: %w", err)
+				} else {
+					activeConfig.PeerAnnounceAtStart = value
+				}
+			}
+		}
+	}
+	if lxmdConfig != nil {
+		sec := lxmdConfig.Section("lxmf")
+		if sec != nil {
+			if _, ok := sec.Get("announce_interval"); ok {
+				value := time.Duration(0)
+				v, err := sec.AsInt("announce_interval")
+				if err != nil {
+					return fmt.Errorf("invalid lxmf.announce_interval: %w", err)
+				}
+				value = time.Duration(v) * time.Minute
+				activeConfig.PeerAnnounceInterval = &value
+			}
+		}
+	}
+	activeConfig.DeliveryTransferMaxAcceptedSize = 1000
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("lxmf"); sec != nil {
+			if _, ok := sec.Get("delivery_transfer_max_accepted_size"); ok {
+				if value, err := sec.AsFloat("delivery_transfer_max_accepted_size"); err != nil {
+					return fmt.Errorf("invalid lxmf.delivery_transfer_max_accepted_size: %w", err)
+				} else {
+					activeConfig.DeliveryTransferMaxAcceptedSize = value
+				}
+			}
+		}
+	}
+	if activeConfig.DeliveryTransferMaxAcceptedSize < 0.38 {
+		activeConfig.DeliveryTransferMaxAcceptedSize = 0.38
+	}
+	activeConfig.OnInbound = ""
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("lxmf"); sec != nil {
+			if value, ok := sec.Get("on_inbound"); ok {
+				activeConfig.OnInbound = value
+			}
+		}
+	}
+
+	activeConfig.EnablePropagationNode = false
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("enable_node"); ok {
+				if value, err := sec.AsBool("enable_node"); err != nil {
+					return fmt.Errorf("invalid propagation.enable_node: %w", err)
+				} else {
+					activeConfig.EnablePropagationNode = value
+				}
+			}
+		}
+	}
+	activeConfig.NodeName = ""
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if value, ok := sec.Get("node_name"); ok {
+				activeConfig.NodeName = value
+			}
+		}
+	}
+	activeConfig.AuthRequired = false
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("auth_required"); ok {
+				if value, err := sec.AsBool("auth_required"); err != nil {
+					return fmt.Errorf("invalid propagation.auth_required: %w", err)
+				} else {
+					activeConfig.AuthRequired = value
+				}
+			}
+		}
+	}
+	activeConfig.NodeAnnounceAtStart = false
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("announce_at_start"); ok {
+				if value, err := sec.AsBool("announce_at_start"); err != nil {
+					return fmt.Errorf("invalid propagation.announce_at_start: %w", err)
+				} else {
+					activeConfig.NodeAnnounceAtStart = value
+				}
+			}
+		}
+	}
+	activeConfig.AutoPeer = true
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("autopeer"); ok {
+				if value, err := sec.AsBool("autopeer"); err != nil {
+					return fmt.Errorf("invalid propagation.autopeer: %w", err)
+				} else {
+					activeConfig.AutoPeer = value
+				}
+			}
+		}
+	}
+	if lxmdConfig != nil {
+		sec := lxmdConfig.Section("propagation")
+		if sec != nil {
+			if _, ok := sec.Get("autopeer_maxdepth"); ok {
+				value := 0
+				v, err := sec.AsInt("autopeer_maxdepth")
+				if err != nil {
+					return fmt.Errorf("invalid propagation.autopeer_maxdepth: %w", err)
+				}
+				value = v
+				activeConfig.AutoPeerMaxDepth = &value
+			}
+			if _, ok := sec.Get("announce_interval"); ok {
+				value := time.Duration(0)
+				v, err := sec.AsInt("announce_interval")
+				if err != nil {
+					return fmt.Errorf("invalid propagation.announce_interval: %w", err)
+				}
+				value = time.Duration(v) * time.Minute
+				activeConfig.NodeAnnounceInterval = &value
+			}
+		}
+	}
+	activeConfig.MessageStorageLimitMB = 500
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("message_storage_limit"); ok {
+				if value, err := sec.AsFloat("message_storage_limit"); err != nil {
+					return fmt.Errorf("invalid propagation.message_storage_limit: %w", err)
+				} else {
+					activeConfig.MessageStorageLimitMB = value
+				}
+			}
+		}
+	}
+	if activeConfig.MessageStorageLimitMB < 0.005 {
+		activeConfig.MessageStorageLimitMB = 0.005
+	}
+	activeConfig.PropagationTransferMaxAcceptedSize = 256
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("propagation_transfer_max_accepted_size"); ok {
+				if value, err := sec.AsFloat("propagation_transfer_max_accepted_size"); err != nil {
+					return fmt.Errorf("invalid propagation.propagation_transfer_max_accepted_size: %w", err)
+				} else {
+					activeConfig.PropagationTransferMaxAcceptedSize = value
+				}
+			}
+		}
+	}
+	if lxmdConfig != nil {
+		sec := lxmdConfig.Section("propagation")
+		if sec != nil {
+			if _, ok := sec.Get("propagation_message_max_accepted_size"); ok {
+				if value, err := sec.AsFloat("propagation_message_max_accepted_size"); err != nil {
+					return fmt.Errorf("invalid propagation.propagation_message_max_accepted_size: %w", err)
+				} else {
+					activeConfig.PropagationTransferMaxAcceptedSize = value
+				}
+			} else {
+				activeConfig.PropagationTransferMaxAcceptedSize = 256
+			}
+		}
+	}
+	if activeConfig.PropagationTransferMaxAcceptedSize < 0.38 {
+		activeConfig.PropagationTransferMaxAcceptedSize = 0.38
+	}
+	activeConfig.PropagationSyncMaxAcceptedSize = 256 * 40
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("propagation_sync_max_accepted_size"); ok {
+				if value, err := sec.AsFloat("propagation_sync_max_accepted_size"); err != nil {
+					return fmt.Errorf("invalid propagation.propagation_sync_max_accepted_size: %w", err)
+				} else {
+					activeConfig.PropagationSyncMaxAcceptedSize = value
+				}
+			}
+		}
+	}
+	if activeConfig.PropagationSyncMaxAcceptedSize < 0.38 {
+		activeConfig.PropagationSyncMaxAcceptedSize = 0.38
+	}
+	activeConfig.PropagationStampCostTarget = 16
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("propagation_stamp_cost_target"); ok {
+				if value, err := sec.AsInt("propagation_stamp_cost_target"); err != nil {
+					return fmt.Errorf("invalid propagation.propagation_stamp_cost_target: %w", err)
+				} else {
+					activeConfig.PropagationStampCostTarget = value
+				}
+			}
+		}
+	}
+	activeConfig.PropagationStampCostFlexibility = 3
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("propagation_stamp_cost_flexibility"); ok {
+				if value, err := sec.AsInt("propagation_stamp_cost_flexibility"); err != nil {
+					return fmt.Errorf("invalid propagation.propagation_stamp_cost_flexibility: %w", err)
+				} else {
+					activeConfig.PropagationStampCostFlexibility = value
+				}
+			}
+		}
+	}
+	activeConfig.PeeringCost = 18
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("peering_cost"); ok {
+				if value, err := sec.AsInt("peering_cost"); err != nil {
+					return fmt.Errorf("invalid propagation.peering_cost: %w", err)
+				} else {
+					activeConfig.PeeringCost = value
+				}
+			}
+		}
+	}
+	activeConfig.RemotePeeringCostMax = 26
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("remote_peering_cost_max"); ok {
+				if value, err := sec.AsInt("remote_peering_cost_max"); err != nil {
+					return fmt.Errorf("invalid propagation.remote_peering_cost_max: %w", err)
+				} else {
+					activeConfig.RemotePeeringCostMax = value
+				}
+			}
+		}
+	}
+	activeConfig.PrioritisedDestinations = []string{}
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if value, ok := sec.Get("prioritise_destinations"); ok {
+				activeConfig.PrioritisedDestinations = []string{}
+				for _, part := range strings.Split(value, ",") {
+					if trimmed := strings.TrimSpace(part); trimmed != "" {
+						activeConfig.PrioritisedDestinations = append(activeConfig.PrioritisedDestinations, trimmed)
+					}
+				}
+			}
+		}
+	}
+	activeConfig.ControlAllowedIdentities = []string{}
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if value, ok := sec.Get("control_allowed"); ok {
+				activeConfig.ControlAllowedIdentities = []string{}
+				for _, part := range strings.Split(value, ",") {
+					if trimmed := strings.TrimSpace(part); trimmed != "" {
+						activeConfig.ControlAllowedIdentities = append(activeConfig.ControlAllowedIdentities, trimmed)
+					}
+				}
+			}
+		}
+	}
 	activeConfig.StaticPeers = [][]byte{}
-	for _, peer := range parseCommaList(stringKey("propagation", "static_peers", "")) {
-		if decoded, err := hex.DecodeString(peer); err == nil {
-			activeConfig.StaticPeers = append(activeConfig.StaticPeers, decoded)
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if value, ok := sec.Get("static_peers"); ok {
+				activeConfig.StaticPeers = [][]byte{}
+				for _, part := range strings.Split(value, ",") {
+					if peer := strings.TrimSpace(part); peer != "" {
+						decoded, err := hex.DecodeString(peer)
+						if err != nil {
+							rns.Log("Could not decode hash from: "+peer, rns.LOG_DEBUG)
+							rns.Log("The contained exception was: "+err.Error(), rns.LOG_DEBUG)
+							continue
+						}
+						activeConfig.StaticPeers = append(activeConfig.StaticPeers, decoded)
+					}
+				}
+			}
 		}
 	}
-	activeConfig.FromStaticOnly = boolKey("propagation", "from_static_only", false)
-	activeConfig.MaxPeers = intKey("propagation", "max_peers", 20)
+	activeConfig.FromStaticOnly = false
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("propagation"); sec != nil {
+			if _, ok := sec.Get("from_static_only"); ok {
+				if value, err := sec.AsBool("from_static_only"); err != nil {
+					return fmt.Errorf("invalid propagation.from_static_only: %w", err)
+				} else {
+					activeConfig.FromStaticOnly = value
+				}
+			}
+		}
+	}
+	if lxmdConfig != nil {
+		sec := lxmdConfig.Section("propagation")
+		if sec != nil {
+			if _, ok := sec.Get("max_peers"); ok {
+				value := 0
+				v, err := sec.AsInt("max_peers")
+				if err != nil {
+					return fmt.Errorf("invalid propagation.max_peers: %w", err)
+				}
+				value = v
+				activeConfig.MaxPeers = &value
+			}
+		}
+	}
 
-	activeConfig.IgnoredLXMFDestinations = loadHashList(ignoredPath)
-	activeConfig.AllowedIdentities = loadHashList(allowedPath)
+	activeConfig.IgnoredLXMFDestinations = [][]byte{}
+	if file, err := os.Open(ignoredPath); err == nil {
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			if decoded, err := hex.DecodeString(line); err == nil {
+				activeConfig.IgnoredLXMFDestinations = append(activeConfig.IgnoredLXMFDestinations, decoded)
+			} else {
+				rns.Log("Could not decode hash from: "+line, rns.LOG_DEBUG)
+				rns.Log("The contained exception was: "+err.Error(), rns.LOG_DEBUG)
+			}
+		}
+		_ = file.Close()
+	} else if _, err := os.Stat(ignoredPath); err == nil {
+		rns.Log("Error while loading list of ignored destinations: "+err.Error(), rns.LOG_ERROR)
+	}
+	activeConfig.AllowedIdentities = [][]byte{}
+	if file, err := os.Open(allowedPath); err == nil {
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			if decoded, err := hex.DecodeString(line); err == nil {
+				activeConfig.AllowedIdentities = append(activeConfig.AllowedIdentities, decoded)
+			} else {
+				rns.Log("Could not decode hash from: "+line, rns.LOG_DEBUG)
+				rns.Log("The contained exception was: "+err.Error(), rns.LOG_DEBUG)
+			}
+		}
+		_ = file.Close()
+	} else if _, err := os.Stat(allowedPath); err == nil {
+		rns.Log("Error while loading list of allowed identities: "+err.Error(), rns.LOG_ERROR)
+	}
 
-	targetLogLevel = intKey("logging", "loglevel", 4)
+	if lxmdConfig != nil {
+		if sec := lxmdConfig.Section("logging"); sec != nil {
+			if _, ok := sec.Get("loglevel"); ok {
+				if value, err := sec.AsInt("loglevel"); err != nil {
+					return fmt.Errorf("invalid logging.loglevel: %w", err)
+				} else {
+					targetLogLevel = value
+				}
+			}
+		}
+	}
 
 	return nil
 }
 
 func lxmfDelivery(msg *lxmf.LXMessage) {
-	if msg == nil || messagesDir == "" {
-		return
+	msgLabel := "<nil>"
+	if msg != nil {
+		msgLabel = msg.String()
 	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			rns.Log("Error occurred while processing received message "+msgLabel+". The contained exception was: "+fmt.Sprint(rec), rns.LOG_ERROR)
+		}
+	}()
+
 	written, err := msg.WriteToDirectory(messagesDir)
 	if err != nil {
-		rns.Log("Error saving inbound LXMF message: "+err.Error(), rns.LOG_ERROR)
-		return
+		panic(err)
 	}
-	rns.Log("Received "+msg.String()+" written to "+written, rns.LOG_DEBUG)
+	rns.Log("Received "+msgLabel+" written to "+written, rns.LOG_DEBUG)
 	if activeConfig.OnInbound != "" {
-		cmd := exec.Command("sh", "-c", fmt.Sprintf("%s %q", activeConfig.OnInbound, written))
-		if err := cmd.Run(); err != nil {
-			rns.Log("Inbound action failed: "+err.Error(), rns.LOG_ERROR)
+		rns.Log("Calling external program to handle message", rns.LOG_DEBUG)
+		processingCommand := activeConfig.OnInbound + " \"" + written + "\""
+		parts := make([]string, 0, 4)
+		var current strings.Builder
+		inSingleQuotes := false
+		inDoubleQuotes := false
+		escaping := false
+		for _, r := range processingCommand {
+			switch {
+			case escaping:
+				current.WriteRune(r)
+				escaping = false
+			case inSingleQuotes:
+				if r == '\'' {
+					inSingleQuotes = false
+				} else {
+					current.WriteRune(r)
+				}
+			case inDoubleQuotes:
+				if r == '"' {
+					inDoubleQuotes = false
+				} else if r == '\\' {
+					escaping = true
+				} else {
+					current.WriteRune(r)
+				}
+			case r == '\\':
+				escaping = true
+			case r == '"':
+				inDoubleQuotes = true
+			case r == '\'':
+				inSingleQuotes = true
+			case (r == ' ' || r == '\t' || r == '\n') && !inSingleQuotes && !inDoubleQuotes:
+				if current.Len() > 0 {
+					parts = append(parts, current.String())
+					current.Reset()
+				}
+			default:
+				current.WriteRune(r)
+			}
 		}
+		if escaping || inSingleQuotes || inDoubleQuotes {
+			panic(errors.New("unmatched quote in inbound command"))
+		}
+		if current.Len() > 0 {
+			parts = append(parts, current.String())
+		}
+		if len(parts) == 0 {
+			panic(errors.New("empty inbound command"))
+		}
+		cmd := exec.Command(parts[0], parts[1:]...)
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		if err := cmd.Start(); err != nil {
+			panic(err)
+		}
+		_ = cmd.Wait()
 	} else {
 		rns.Log("No action defined for inbound messages, ignoring", rns.LOG_DEBUG)
 	}
@@ -424,14 +726,18 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 	}
 
 	if configDir == "" {
-		if dirExists("/etc/lxmd") && fileExists("/etc/lxmd/config") {
-			configDir = "/etc/lxmd"
+		if info, err := os.Stat("/etc/lxmd"); err == nil && info.IsDir() {
+			if _, err := os.Stat("/etc/lxmd/config"); err == nil {
+				configDir = "/etc/lxmd"
+			}
 		} else if userdir, err := os.UserHomeDir(); err == nil {
 			candidate := filepath.Join(userdir, ".config/lxmd")
-			if dirExists(candidate) && fileExists(filepath.Join(candidate, "config")) {
-				configDir = candidate
-			} else {
-				configDir = filepath.Join(userdir, ".lxmd")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				if _, err := os.Stat(filepath.Join(candidate, "config")); err == nil {
+					configDir = candidate
+				} else {
+					configDir = filepath.Join(userdir, ".lxmd")
+				}
 			}
 		}
 	}
@@ -448,26 +754,29 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 		os.Exit(1)
 	}
 
-	if !fileExists(configPath) {
+	if _, err := os.Stat(configPath); err != nil {
 		rns.Log("Could not load config file, creating default configuration file...", rns.LOG_WARNING)
 		if err := os.WriteFile(configPath, []byte(defaultConfigFile), 0o644); err != nil {
 			rns.Log("Failed to create default config: "+err.Error(), rns.LOG_ERROR)
 			os.Exit(1)
 		}
 		rns.Log("Default config file created. Make any necessary changes in "+configPath+" and restart lxmd if needed.", rns.LOG_INFO)
+		time.Sleep(1500 * time.Millisecond)
 	}
 
 	var err error
 	lxmdConfig, err = configobj.Load(configPath)
 	if err != nil {
-		rns.Log("Could not parse configuration: "+err.Error(), rns.LOG_ERROR)
-		os.Exit(1)
+		rns.Log("Could not parse the configuration at "+configPath, rns.LOG_ERROR)
+		rns.Log("Check your configuration file for errors!", rns.LOG_ERROR)
+		rns.Panic()
 	}
 
 	if err := applyConfig(); err != nil {
-		rns.Log("Error applying configuration: "+err.Error(), rns.LOG_ERROR)
-		os.Exit(1)
+		rns.Log("Could not apply LXM Daemon configuration. The contained exception was: "+err.Error(), rns.LOG_ERROR)
+		rns.Panic()
 	}
+	rns.Log("Configuration loaded from "+configPath, rns.LOG_VERBOSE)
 
 	targetLogLevel = targetLogLevel + verbosity - quietness
 
@@ -476,18 +785,24 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 		logDest = rns.LOG_FILE
 	}
 
-	if _, err := rns.NewReticulum(ptrOrNil(rnsConfigDir), &targetLogLevel, logDest, nil, false, nil); err != nil {
+	rns.Log("Substantiating Reticulum...", rns.LOG_NOTICE)
+	var rnsConfigDirPtr *string
+	if rnsConfigDir != "" {
+		rnsConfigDirPtr = &rnsConfigDir
+	}
+	if _, err := rns.NewReticulum(rnsConfigDirPtr, &targetLogLevel, logDest, nil, false, nil); err != nil {
 		rns.Log("Could not start Reticulum: "+err.Error(), rns.LOG_ERROR)
 		os.Exit(1)
 	}
 
-	if fileExists(identityPath) {
+	if _, err := os.Stat(identityPath); err == nil {
 		identity, err = rns.IdentityFromFile(identityPath)
 		if err != nil {
 			rns.Log("Could not load identity: "+err.Error(), rns.LOG_ERROR)
 			os.Exit(1)
 		}
 	} else {
+		rns.Log("No Primary Identity file found, creating new...", rns.LOG_INFO)
 		identity, err = rns.NewIdentity()
 		if err != nil {
 			rns.Log("Could not create identity: "+err.Error(), rns.LOG_ERROR)
@@ -497,6 +812,7 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 			rns.Log("Could not save identity: "+err.Error(), rns.LOG_ERROR)
 			os.Exit(1)
 		}
+		rns.Log("Created new Primary Identity "+identity.String(), rns.LOG_INFO)
 	}
 
 	messageRouter, err = lxmf.NewLXMRouter(identity, storageDir)
@@ -506,22 +822,24 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 	}
 
 	messageRouter.AutoPeer = activeConfig.AutoPeer
-	messageRouter.AutoPeerMaxDepth = activeConfig.AutoPeerMaxDepth
-	if activeConfig.PeerAnnounceInterval > 0 {
-		lastPeerAnnounce = time.Now().Add(-activeConfig.PeerAnnounceInterval)
+	if activeConfig.AutoPeerMaxDepth != nil {
+		messageRouter.AutoPeerMaxDepth = *activeConfig.AutoPeerMaxDepth
 	}
-	if activeConfig.NodeAnnounceInterval > 0 {
-		lastNodeAnnounce = time.Now().Add(-activeConfig.NodeAnnounceInterval)
+	if activeConfig.PeerAnnounceInterval != nil {
+		lastPeerAnnounce = time.Now().Add(-*activeConfig.PeerAnnounceInterval)
 	}
-	messageRouter.PropagationPerTransferLimit = activeConfig.PropagationTransferMaxAcceptedSize
-	messageRouter.PropagationPerSyncLimit = activeConfig.PropagationSyncMaxAcceptedSize
-	messageRouter.DeliveryPerTransferLimit = activeConfig.DeliveryTransferMaxAcceptedSize
+	if activeConfig.NodeAnnounceInterval != nil {
+		lastNodeAnnounce = time.Now().Add(-*activeConfig.NodeAnnounceInterval)
+	}
+	messageRouter.PropagationPerTransferLimit = int(activeConfig.PropagationTransferMaxAcceptedSize)
+	messageRouter.PropagationPerSyncLimit = int(activeConfig.PropagationSyncMaxAcceptedSize)
+	messageRouter.DeliveryPerTransferLimit = int(activeConfig.DeliveryTransferMaxAcceptedSize)
 	messageRouter.PropagationStampCost = activeConfig.PropagationStampCostTarget
 	messageRouter.PropagationStampCostFlexibility = activeConfig.PropagationStampCostFlexibility
 	messageRouter.PeeringCost = activeConfig.PeeringCost
 	messageRouter.MaxPeeringCost = activeConfig.RemotePeeringCostMax
-	if activeConfig.MaxPeers > 0 {
-		messageRouter.MaxPeers = activeConfig.MaxPeers
+	if activeConfig.MaxPeers != nil {
+		messageRouter.MaxPeers = *activeConfig.MaxPeers
 	}
 	messageRouter.StaticPeers = activeConfig.StaticPeers
 	messageRouter.FromStaticOnly = activeConfig.FromStaticOnly
@@ -534,10 +852,17 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 		}
 	}
 
-	lxmfDestination = messageRouter.RegisterDeliveryIdentity(identity, ptrOrNil(activeConfig.DisplayName), nil)
-	_ = rns.IdentityRemember(nil, lxmfDestination.Hash, identity.GetPublicKey(), nil)
+	var displayNamePtr *string
+	if activeConfig.DisplayName != "" {
+		displayNamePtr = &activeConfig.DisplayName
+	}
+	lxmfDestination = messageRouter.RegisterDeliveryIdentity(identity, displayNamePtr, nil)
+	rns.IdentityRemember(nil, lxmfDestination.Hash, identity.GetPublicKey(), nil)
 	if activeConfig.AuthRequired {
 		messageRouter.SetAuthentication(true)
+		if len(activeConfig.AllowedIdentities) == 0 {
+			rns.Log("Clint authentication was enabled, but no identity hashes could be loaded from "+allowedPath+". Nobody will be able to sync messages from this propagation node.", rns.LOG_WARNING)
+		}
 		for _, allowed := range activeConfig.AllowedIdentities {
 			if len(allowed) == rns.ReticulumTruncatedHashLength/8 {
 				messageRouter.Allow(allowed)
@@ -545,68 +870,63 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 		}
 	}
 
-	if activeConfig.MessageStorageLimitMB > 0 {
-		_ = messageRouter.SetMessageStorageLimit(0, activeConfig.MessageStorageLimitMB, 0)
-	}
-	for _, dest := range activeConfig.PrioritisedDestinations {
-		if decoded, err := hex.DecodeString(dest); err == nil && len(decoded) == rns.ReticulumTruncatedHashLength/8 {
-			messageRouter.Prioritise(decoded)
-		}
-	}
-
-	for _, control := range activeConfig.ControlAllowedIdentities {
-		if decoded, err := hex.DecodeString(control); err == nil && len(decoded) == rns.ReticulumTruncatedHashLength/8 {
-			messageRouter.AllowControl(decoded)
-		}
-	}
-
+	rns.Log("LXMF Router ready to receive on "+rns.PrettyHexRep(lxmfDestination.Hash), rns.LOG_NOTICE)
 	if runPN || activeConfig.EnablePropagationNode {
+		_ = messageRouter.SetMessageStorageLimit(0, activeConfig.MessageStorageLimitMB, 0)
+		for _, dest := range activeConfig.PrioritisedDestinations {
+			if decoded, err := hex.DecodeString(dest); err == nil && len(decoded) == rns.ReticulumTruncatedHashLength/8 {
+				messageRouter.Prioritise(decoded)
+			} else if err != nil {
+				rns.Log("Cannot prioritise "+dest+", it is not a valid destination hash", rns.LOG_ERROR)
+			}
+		}
+		for _, control := range activeConfig.ControlAllowedIdentities {
+			if decoded, err := hex.DecodeString(control); err == nil && len(decoded) == rns.ReticulumTruncatedHashLength/8 {
+				messageRouter.AllowControl(decoded)
+			} else if err != nil {
+				rns.Log("Cannot allow control from "+control+", it is not a valid identity hash", rns.LOG_ERROR)
+			}
+		}
 		messageRouter.EnablePropagation()
 		if messageRouter.PropagationDestination != nil {
 			rns.Log("LXMF Propagation Node started on "+rns.PrettyHexRep(messageRouter.PropagationDestination.Hash), rns.LOG_NOTICE)
 		}
 	}
 
-	rns.Log("LXMF Router ready to receive on "+rns.PrettyHexRep(lxmfDestination.Hash), rns.LOG_NOTICE)
+	rns.Log(fmt.Sprintf("Started lxmd version %s", lxmf.Version), rns.LOG_NOTICE)
 	time.Sleep(100 * time.Millisecond)
 	go deferredStartJobs()
 
 	select {}
 }
 
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
 func jobs() {
 	for {
-		if messageRouter != nil && lxmfDestination != nil && activeConfig.PeerAnnounceInterval > 0 {
-			if time.Since(lastPeerAnnounce) >= activeConfig.PeerAnnounceInterval {
-				messageRouter.Announce(lxmfDestination.Hash, nil)
-				lastPeerAnnounce = time.Now()
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					rns.Log("An error occurred while running periodic jobs. The contained exception was: "+fmt.Sprint(rec), rns.LOG_ERROR)
+				}
+			}()
+			if activeConfig.PeerAnnounceInterval != nil {
+				if time.Since(lastPeerAnnounce) >= *activeConfig.PeerAnnounceInterval {
+					messageRouter.Announce(lxmfDestination.Hash, nil)
+					lastPeerAnnounce = time.Now()
+				}
 			}
-		}
-		if messageRouter != nil && activeConfig.NodeAnnounceInterval > 0 {
-			if time.Since(lastNodeAnnounce) >= activeConfig.NodeAnnounceInterval {
-				messageRouter.AnnouncePropagationNode()
-				lastNodeAnnounce = time.Now()
+			if activeConfig.NodeAnnounceInterval != nil {
+				if time.Since(lastNodeAnnounce) >= *activeConfig.NodeAnnounceInterval {
+					messageRouter.AnnouncePropagationNode()
+					lastNodeAnnounce = time.Now()
+				}
 			}
-		}
+		}()
 		time.Sleep(jobsInterval)
 	}
 }
 
 func deferredStartJobs() {
 	time.Sleep(deferredJobsDelay)
-	if messageRouter == nil || lxmfDestination == nil {
-		return
-	}
 	rns.Log("Running deferred start jobs", rns.LOG_DEBUG)
 	if activeConfig.PeerAnnounceAtStart {
 		rns.Log("Sending announce for LXMF delivery destination", rns.LOG_EXTREME)
@@ -621,66 +941,58 @@ func deferredStartJobs() {
 	go jobs()
 }
 
-func detectExistingConfigDir(configDir string) (string, error) {
-	if configDir != "" {
-		if fileExists(filepath.Join(configDir, "config")) {
-			return configDir, nil
-		}
-		return "", fmt.Errorf("non-existent config path: %s", configDir)
-	}
-	if dirExists("/etc/lxmd") && fileExists("/etc/lxmd/config") {
-		return "/etc/lxmd", nil
-	}
-	if userdir, err := os.UserHomeDir(); err == nil {
-		candidate := filepath.Join(userdir, ".config/lxmd")
-		if dirExists(candidate) && fileExists(filepath.Join(candidate, "config")) {
-			return candidate, nil
-		}
-		fallback := filepath.Join(userdir, ".lxmd")
-		if dirExists(fallback) && fileExists(filepath.Join(fallback, "config")) {
-			return fallback, nil
-		}
-	}
-	return "", errors.New("could not locate LXMD configuration directory")
-}
-
-func setRemotePaths(configDir string) (string, error) {
-	resolved, err := detectExistingConfigDir(configDir)
-	if err != nil {
-		return "", err
-	}
-	configPath = filepath.Join(resolved, "config")
-	ignoredPath = filepath.Join(resolved, "ignored")
-	allowedPath = filepath.Join(resolved, "allowed")
-	identityPath = filepath.Join(resolved, "identity")
-	storageDir = filepath.Join(resolved, "storage")
-	messagesDir = filepath.Join(storageDir, "messages")
-	return resolved, nil
-}
-
 func remoteInit(configDir, rnsConfigDir, identityFile string, verbosity, quietness int) error {
-	_, err := setRemotePaths(configDir)
-	if err != nil {
-		return err
+	var err error
+	if identityFile == "" {
+		resolved := configDir
+		if resolved == "" {
+			if info, err := os.Stat("/etc/lxmd"); err == nil && info.IsDir() {
+				if _, err := os.Stat("/etc/lxmd/config"); err == nil {
+					resolved = "/etc/lxmd"
+				}
+			}
+			if resolved == "" {
+				if userdir, err := os.UserHomeDir(); err == nil {
+					candidate := filepath.Join(userdir, ".config/lxmd")
+					if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+						if _, err := os.Stat(filepath.Join(candidate, "config")); err == nil {
+							resolved = candidate
+						}
+					}
+					if resolved == "" {
+						fallback := filepath.Join(userdir, ".lxmd")
+						if info, err := os.Stat(fallback); err == nil && info.IsDir() {
+							if _, err := os.Stat(filepath.Join(fallback, "config")); err == nil {
+								resolved = fallback
+							}
+						}
+					}
+				}
+			}
+		}
+		if resolved == "" {
+			return errors.New("could not locate LXMD configuration directory")
+		}
+		if _, err := os.Stat(filepath.Join(resolved, "config")); err != nil {
+			return fmt.Errorf("non-existent config path: %s", resolved)
+		}
+		configPath = filepath.Join(resolved, "config")
+		identityPath = filepath.Join(resolved, "identity")
 	}
 	if identityFile == "" {
 		identityFile = filepath.Join(filepath.Dir(configPath), "identity")
 	}
-	if !fileExists(identityFile) {
+	if _, err := os.Stat(identityFile); err != nil {
 		return fmt.Errorf("identity file not found: %s", identityFile)
-	}
-
-	lxmdConfig, err = configobj.Load(configPath)
-	if err != nil {
-		return fmt.Errorf("could not parse configuration: %w", err)
-	}
-	if err := applyConfig(); err != nil {
-		return err
 	}
 
 	level := targetLogLevel + verbosity - quietness
 	var logDest any = func(int, string) {}
-	if _, err := rns.NewReticulum(ptrOrNil(rnsConfigDir), &level, logDest, nil, true, nil); err != nil {
+	var rnsConfigDirPtr *string
+	if rnsConfigDir != "" {
+		rnsConfigDirPtr = &rnsConfigDir
+	}
+	if _, err := rns.NewReticulum(rnsConfigDirPtr, &level, logDest, nil, true, nil); err != nil {
 		return fmt.Errorf("could not start Reticulum: %w", err)
 	}
 
@@ -710,149 +1022,80 @@ func getRemoteIdentity(remote string, timeout float64) (*rns.Identity, error) {
 		return id, nil
 	}
 
-	if !rns.TransportHasPath(destHash) {
-		rns.TransportRequestPath(destHash)
+	if !rns.HasPath(destHash) {
+		rns.RequestPath(destHash, nil, nil, false)
 	}
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 	for time.Now().Before(deadline) {
-		if rns.TransportHasPath(destHash) {
-			if id := rns.IdentityRecall(destHash); id != nil {
-				return id, nil
-			}
+		if rns.HasPath(destHash) {
+			return rns.IdentityRecall(destHash), nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return nil, errors.New("could not recall remote identity")
 }
 
-func controlRequest(remote *rns.Identity, path string, data any, timeout float64) (any, error) {
-	dest, err := rns.NewDestination(remote, rns.DestinationOUT, rns.DestinationSINGLE, lxmf.AppName, "propagation", "control")
-	if err != nil {
-		return nil, err
-	}
-	link, err := rns.NewOutgoingLink(dest, rns.LinkModeDefault, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer link.Teardown()
-	linkDeadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	for link.Status != rns.LinkActive && time.Now().Before(linkDeadline) {
-		time.Sleep(50 * time.Millisecond)
-	}
-	if link.Status != rns.LinkActive {
-		return nil, errors.New("control link establishment timed out")
-	}
-	link.Identify(identity)
-	// Give the remote side a brief window to process LINKIDENTIFY before the
-	// first control request, otherwise allow-listed handlers can race and reply
-	// with PeerErrorNoIdentity.
-	time.Sleep(50 * time.Millisecond)
-
-	request := link.Request(path, data, nil, nil, nil, timeout)
-	if request == nil {
-		return nil, errors.New("control request could not be sent")
-	}
-	receipt, ok := request.(*rns.RequestReceipt)
-	if !ok || receipt == nil {
-		return nil, fmt.Errorf("unexpected control request receipt: %T", request)
-	}
-
-	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	for !receipt.Concluded() && time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !receipt.Concluded() {
-		return nil, errors.New("control request timed out")
-	}
-	if receipt.Status() == rns.ReceiptFailed {
-		return nil, errors.New("control request failed")
-	}
-	response := receipt.Response()
-	if err := controlResponseError(response); err != nil {
-		return nil, err
-	}
-	return response, nil
-}
-
-func controlResponseError(response any) error {
-	var code int
-	switch v := response.(type) {
-	case int:
-		code = v
-	case int64:
-		code = int(v)
-	case float64:
-		code = int(v)
-	default:
-		return nil
-	}
-
-	switch code {
-	case lxmf.PeerErrorNoIdentity:
-		return errors.New("control request rejected: remote side has not identified this link")
-	case lxmf.PeerErrorNoAccess:
-		return errors.New("control request rejected: access denied")
-	case lxmf.PeerErrorInvalidData:
-		return errors.New("control request rejected: invalid request data")
-	case lxmf.PeerErrorNotFound:
-		return errors.New("control request rejected: peer not found")
-	default:
-		return nil
-	}
-}
-
-func convertStatsValue(val any) any {
-	switch mapped := val.(type) {
-	case map[any]any:
-		return convertStatsMap(mapped)
-	case []any:
-		out := make([]any, len(mapped))
-		for i, entry := range mapped {
-			out[i] = convertStatsValue(entry)
-		}
-		return out
-	case []byte:
-		return fmt.Sprintf("%x", mapped)
-	default:
-		return mapped
-	}
-}
-
-func convertStatsMap(input map[any]any) map[string]any {
-	out := make(map[string]any, len(input))
-	for key, val := range input {
-		out[fmt.Sprint(key)] = convertStatsValue(val)
-	}
-	return out
-}
-
 func renderStatusResponse(w io.Writer, stats map[string]any, showStatus, showPeers bool) {
-	fmt.Fprintf(w, "\nLXMF Propagation Node running on %v, uptime is %v\n", stats["destination_hash"], rns.PrettyTime(float64(toInt(stats["uptime"])), false, false))
-	if showStatus {
-		if ms, ok := stats["messagestore"].(map[string]any); ok {
-			bytes := toInt(ms["bytes"])
-			limit := toInt(ms["limit"])
-			count := toInt(ms["count"])
-			util := ""
-			if limit > 0 {
-				util = fmt.Sprintf("%.2f%%", float64(bytes)/float64(limit)*100)
-			}
-			fmt.Fprintf(w, "Messagestore contains %d messages, %s (%s utilised of %s)\n", count, rns.PrettySize(float64(bytes)), util, rns.PrettySize(float64(limit)))
+	intValue := func(value any) int {
+		switch v := value.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		case string:
+			i, _ := strconv.Atoi(v)
+			return i
+		default:
+			return 0
 		}
+	}
+	floatValue := func(value any) float64 {
+		switch v := value.(type) {
+		case float64:
+			return v
+		case float32:
+			return float64(v)
+		case int:
+			return float64(v)
+		case int64:
+			return float64(v)
+		case uint64:
+			return float64(v)
+		case string:
+			f, _ := strconv.ParseFloat(v, 64)
+			return f
+		default:
+			return 0
+		}
+	}
+
+	fmt.Fprintf(w, "\nLXMF Propagation Node running on %v, uptime is %v\n", stats["destination_hash"], rns.PrettyTime(float64(intValue(stats["uptime"])), false, false))
+	if showStatus {
+		ms := stats["messagestore"].(map[string]any)
+		bytes := intValue(ms["bytes"])
+		limit := intValue(ms["limit"])
+		count := intValue(ms["count"])
+		util := ""
+		if limit > 0 {
+			util = fmt.Sprintf("%.2f%%", float64(bytes)/float64(limit)*100)
+		}
+		fmt.Fprintf(w, "Messagestore contains %d messages, %s (%s utilised of %s)\n", count, rns.PrettySize(float64(bytes)), util, rns.PrettySize(float64(limit)))
 		fmt.Fprintf(w, "Required propagation stamp cost is %v, flexibility is %v\n", stats["target_stamp_cost"], stats["stamp_cost_flexibility"])
 		fmt.Fprintf(w, "Peering cost is %v, max remote peering cost is %v\n", stats["peering_cost"], stats["max_peering_cost"])
-		if fromStaticOnly, ok := stats["from_static_only"].(bool); ok && fromStaticOnly {
+		if stats["from_static_only"].(bool) {
 			fmt.Fprintln(w, "Accepting propagated messages from static peers only")
 		} else {
 			fmt.Fprintln(w, "Accepting propagated messages from all nodes")
 		}
-		fmt.Fprintf(w, "%s message limit, %s sync limit\n", rns.PrettySize(float64(toInt(stats["propagation_limit"])*1000)), rns.PrettySize(float64(toInt(stats["sync_limit"])*1000)))
+		fmt.Fprintf(w, "%s message limit, %s sync limit\n", rns.PrettySize(float64(intValue(stats["propagation_limit"])*1000)), rns.PrettySize(float64(intValue(stats["sync_limit"])*1000)))
 
-		peersMap, _ := stats["peers"].(map[string]any)
-		totalPeers := toInt(stats["total_peers"])
-		maxPeers := toInt(stats["max_peers"])
-		discoveredPeers := toInt(stats["discovered_peers"])
-		staticPeers := toInt(stats["static_peers"])
+		peersMap := stats["peers"].(map[string]any)
+		totalPeers := intValue(stats["total_peers"])
+		maxPeers := intValue(stats["max_peers"])
+		discoveredPeers := intValue(stats["discovered_peers"])
+		staticPeers := intValue(stats["static_peers"])
 
 		availablePeers := 0
 		unreachablePeers := 0
@@ -861,38 +1104,35 @@ func renderStatusResponse(w io.Writer, stats map[string]any, showStatus, showPee
 		peeredRxBytes := 0
 		peeredTxBytes := 0
 		for _, entry := range peersMap {
-			pm, ok := entry.(map[string]any)
-			if !ok {
-				continue
-			}
-			if alive, ok := pm["alive"].(bool); ok && alive {
+			pm := entry.(map[string]any)
+			if pm["alive"].(bool) {
 				availablePeers++
 			} else {
 				unreachablePeers++
 			}
-			msgs, _ := pm["messages"].(map[string]any)
-			peeredIncoming += toInt(msgs["incoming"])
-			peeredOutgoing += toInt(msgs["outgoing"])
-			peeredRxBytes += toInt(pm["rx_bytes"])
-			peeredTxBytes += toInt(pm["tx_bytes"])
+			msgs := pm["messages"].(map[string]any)
+			peeredIncoming += intValue(msgs["incoming"])
+			peeredOutgoing += intValue(msgs["outgoing"])
+			peeredRxBytes += intValue(pm["rx_bytes"])
+			peeredTxBytes += intValue(pm["tx_bytes"])
 		}
 
 		fmt.Fprintf(w, "\nPeers   : %d total (peer limit is %d)\n", totalPeers, maxPeers)
 		fmt.Fprintf(w, "          %d discovered, %d static\n", discoveredPeers, staticPeers)
 		fmt.Fprintf(w, "          %d available, %d unreachable\n", availablePeers, unreachablePeers)
 
-		unpeeredIncoming := toInt(stats["unpeered_propagation_incoming"])
-		unpeeredRxBytes := toInt(stats["unpeered_propagation_rx_bytes"])
-		clients, _ := stats["clients"].(map[string]any)
-		clientPropagationReceived := toInt(clients["client_propagation_messages_received"])
-		clientPropagationServed := toInt(clients["client_propagation_messages_served"])
+		unpeeredIncoming := intValue(stats["unpeered_propagation_incoming"])
+		unpeeredRxBytes := intValue(stats["unpeered_propagation_rx_bytes"])
+		clients := stats["clients"].(map[string]any)
+		clientPropagationReceived := intValue(clients["client_propagation_messages_received"])
+		clientPropagationServed := intValue(clients["client_propagation_messages_served"])
 
 		totalIncoming := peeredIncoming + unpeeredIncoming + clientPropagationReceived
 		totalRxBytes := peeredRxBytes + unpeeredRxBytes
-		df := any(0)
+		df := 0.0
 		if totalIncoming != 0 {
 			raw := float64(peeredOutgoing) / float64(totalIncoming)
-			df = math.Round(raw*100) / 100
+			df = math.RoundToEven(raw*100) / 100
 		}
 
 		fmt.Fprintf(w, "\nTraffic : %d messages received in total (%s)\n", totalIncoming, rns.PrettySize(float64(totalRxBytes)))
@@ -909,12 +1149,9 @@ func renderStatusResponse(w io.Writer, stats map[string]any, showStatus, showPee
 		if !showStatus {
 			fmt.Fprintln(w, "")
 		}
-		if peers, ok := stats["peers"].(map[string]any); ok && len(peers) > 0 {
-			for peerID, entry := range peers {
-				peerMap, ok := entry.(map[string]any)
-				if !ok {
-					continue
-				}
+		if len(stats["peers"].(map[string]any)) > 0 {
+			for peerID, entry := range stats["peers"].(map[string]any) {
+				peerMap := entry.(map[string]any)
 				ind := "  "
 				peerType := "Unknown peer    "
 				switch peerMap["type"] {
@@ -924,11 +1161,11 @@ func renderStatusResponse(w io.Writer, stats map[string]any, showStatus, showPee
 					peerType = "Discovered peer "
 				}
 				status := "Unreachable"
-				if alive, ok := peerMap["alive"].(bool); ok && alive {
+				if peerMap["alive"].(bool) {
 					status = "Available"
 				}
-				h := math.Max(nowUnixSeconds()-float64(toInt(peerMap["last_heard"])), 0)
-				hops := toInt(peerMap["network_distance"])
+				h := math.Max(float64(time.Now().UnixNano())/1e9-float64(intValue(peerMap["last_heard"])), 0)
+				hops := intValue(peerMap["network_distance"])
 				hs := "hops unknown"
 				if hops != rns.PathfinderMaxHops {
 					if hops == 1 {
@@ -937,7 +1174,7 @@ func renderStatusResponse(w io.Writer, stats map[string]any, showStatus, showPee
 						hs = fmt.Sprintf("%d hops away", hops)
 					}
 				}
-				pm, _ := peerMap["messages"].(map[string]any)
+				pm := peerMap["messages"].(map[string]any)
 				pk := "Not generated"
 				if peerMap["peering_key"] != nil {
 					pk = fmt.Sprintf("Generated, value is %v", peerMap["peering_key"])
@@ -955,27 +1192,27 @@ func renderStatusResponse(w io.Writer, stats map[string]any, showStatus, showPee
 					psf = "unknown"
 				}
 				ls := "never synced"
-				if toInt(peerMap["last_sync_attempt"]) != 0 {
-					lsa := math.Max(nowUnixSeconds()-float64(toInt(peerMap["last_sync_attempt"])), 0)
+				if intValue(peerMap["last_sync_attempt"]) != 0 {
+					lsa := math.Max(float64(time.Now().UnixNano())/1e9-float64(intValue(peerMap["last_sync_attempt"])), 0)
 					ls = fmt.Sprintf("last synced %s ago", rns.PrettyTime(lsa, false, false))
 				}
-				sstr := rns.PrettySpeed(float64(toInt(peerMap["str"])))
-				sler := rns.PrettySpeed(float64(toInt(peerMap["ler"])))
+				sstr := rns.PrettySpeed(float64(intValue(peerMap["str"])))
+				sler := rns.PrettySpeed(float64(intValue(peerMap["ler"])))
 				stl := "Unknown"
-				if toInt(peerMap["transfer_limit"]) != 0 {
-					stl = rns.PrettySize(float64(toInt(peerMap["transfer_limit"]) * 1000))
+				if intValue(peerMap["transfer_limit"]) != 0 {
+					stl = rns.PrettySize(float64(intValue(peerMap["transfer_limit"]) * 1000))
 				}
 				ssl := "unknown"
-				if toInt(peerMap["sync_limit"]) != 0 {
-					ssl = rns.PrettySize(float64(toInt(peerMap["sync_limit"]) * 1000))
+				if intValue(peerMap["sync_limit"]) != 0 {
+					ssl = rns.PrettySize(float64(intValue(peerMap["sync_limit"]) * 1000))
 				}
-				srxb := rns.PrettySize(float64(toInt(peerMap["rx_bytes"])))
-				stxb := rns.PrettySize(float64(toInt(peerMap["tx_bytes"])))
-				pmo := toInt(pm["offered"])
-				pmout := toInt(pm["outgoing"])
-				pmi := toInt(pm["incoming"])
-				pmuh := toInt(pm["unhandled"])
-				ar := math.Round(toFloat(peerMap["acceptance_rate"])*10000) / 100
+				srxb := rns.PrettySize(float64(intValue(peerMap["rx_bytes"])))
+				stxb := rns.PrettySize(float64(intValue(peerMap["tx_bytes"])))
+				pmo := intValue(pm["offered"])
+				pmout := intValue(pm["outgoing"])
+				pmi := intValue(pm["incoming"])
+				pmuh := intValue(pm["unhandled"])
+				ar := math.RoundToEven(floatValue(peerMap["acceptance_rate"])*10000) / 100
 				nn := strings.TrimSpace(fmt.Sprint(peerMap["name"]))
 				if nn == "<nil>" {
 					nn = ""
@@ -1011,57 +1248,80 @@ func printStatusResponse(remote string, showStatus, showPeers bool, timeout floa
 	if err != nil {
 		return err
 	}
-	resp, err := controlRequest(targetIdentity, lxmf.StatsGetPath, nil, timeout)
+	dest, err := rns.NewDestination(targetIdentity, rns.DestinationOUT, rns.DestinationSINGLE, lxmf.AppName, "propagation", "control")
 	if err != nil {
 		return err
 	}
+	link, err := rns.NewLink(dest, nil, rns.LinkModeDefault, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer link.Teardown()
+	linkDeadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for link.Status != rns.LinkActive && time.Now().Before(linkDeadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if link.Status != rns.LinkActive {
+		return errors.New("control link establishment timed out")
+	}
+	link.Identify(identity)
+	time.Sleep(50 * time.Millisecond)
+	request := link.Request(lxmf.StatsGetPath, nil, nil, nil, nil, timeout)
+	if request == nil {
+		return errors.New("control request could not be sent")
+	}
+	receipt, ok := request.(*rns.RequestReceipt)
+	if !ok || receipt == nil {
+		return fmt.Errorf("unexpected control request receipt: %T", request)
+	}
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for {
+		status := receipt.GetStatus()
+		if status == rns.RequestReceiptReady || status == rns.RequestReceiptFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			return errors.New("control request timed out")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if receipt.GetStatus() == rns.RequestReceiptFailed {
+		return errors.New("control request failed")
+	}
+	resp := receipt.GetResponse()
 	rawMap, ok := resp.(map[any]any)
 	if !ok {
 		return fmt.Errorf("unexpected stats response: %T", resp)
 	}
-	stats := convertStatsMap(rawMap)
+	var normalize func(any) any
+	normalize = func(val any) any {
+		switch mapped := val.(type) {
+		case map[any]any:
+			out := make(map[string]any, len(mapped))
+			for key, entry := range mapped {
+				switch k := key.(type) {
+				case []byte:
+					out[string(k)] = normalize(entry)
+				default:
+					out[fmt.Sprint(k)] = normalize(entry)
+				}
+			}
+			return out
+		case []any:
+			out := make([]any, len(mapped))
+			for i, entry := range mapped {
+				out[i] = normalize(entry)
+			}
+			return out
+		case []byte:
+			return fmt.Sprintf("%x", mapped)
+		default:
+			return mapped
+		}
+	}
+	stats := normalize(rawMap).(map[string]any)
 	renderStatusResponse(os.Stdout, stats, showStatus, showPeers)
 	return nil
-}
-
-func toInt(value any) int {
-	switch v := value.(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case string:
-		i, _ := strconv.Atoi(v)
-		return i
-	default:
-		return 0
-	}
-}
-
-func toFloat(value any) float64 {
-	switch v := value.(type) {
-	case float64:
-		return v
-	case float32:
-		return float64(v)
-	case int:
-		return float64(v)
-	case int64:
-		return float64(v)
-	case uint64:
-		return float64(v)
-	case string:
-		f, _ := strconv.ParseFloat(v, 64)
-		return f
-	default:
-		return 0
-	}
-}
-
-func nowUnixSeconds() float64 {
-	return float64(time.Now().UnixNano()) / 1e9
 }
 
 func requestSyncPeer(target, remote string, timeout float64) error {
@@ -1076,10 +1336,87 @@ func requestSyncPeer(target, remote string, timeout float64) error {
 	if err != nil {
 		return err
 	}
-	if _, err := controlRequest(remoteIdentity, lxmf.SyncRequestPath, destHash, timeout); err != nil {
+	dest, err := rns.NewDestination(remoteIdentity, rns.DestinationOUT, rns.DestinationSINGLE, lxmf.AppName, "propagation", "control")
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Sync requested for peer %s\n", target)
+	link, err := rns.NewLink(dest, nil, rns.LinkModeDefault, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer link.Teardown()
+	linkDeadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for link.Status != rns.LinkActive && time.Now().Before(linkDeadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if link.Status != rns.LinkActive {
+		return errors.New("control link establishment timed out")
+	}
+	link.Identify(identity)
+	time.Sleep(50 * time.Millisecond)
+	request := link.Request(lxmf.SyncRequestPath, destHash, nil, nil, nil, timeout)
+	if request == nil {
+		return errors.New("control request could not be sent")
+	}
+	receipt, ok := request.(*rns.RequestReceipt)
+	if !ok || receipt == nil {
+		return fmt.Errorf("unexpected control request receipt: %T", request)
+	}
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for {
+		status := receipt.GetStatus()
+		if status == rns.RequestReceiptReady || status == rns.RequestReceiptFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			return errors.New("control request timed out")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if receipt.GetStatus() == rns.RequestReceiptFailed {
+		return errors.New("control request failed")
+	}
+	response := receipt.GetResponse()
+	if response == nil {
+		return errors.New("empty response received")
+	}
+	switch code := response.(type) {
+	case int:
+		switch code {
+		case lxmf.PeerErrorNoIdentity:
+			return errors.New("control request rejected: remote side has not identified this link")
+		case lxmf.PeerErrorNoAccess:
+			return errors.New("control request rejected: access denied")
+		case lxmf.PeerErrorInvalidData:
+			return errors.New("control request rejected: invalid request data")
+		case lxmf.PeerErrorNotFound:
+			return errors.New("control request rejected: peer not found")
+		}
+	case int64:
+		switch int(code) {
+		case lxmf.PeerErrorNoIdentity:
+			return errors.New("control request rejected: remote side has not identified this link")
+		case lxmf.PeerErrorNoAccess:
+			return errors.New("control request rejected: access denied")
+		case lxmf.PeerErrorInvalidData:
+			return errors.New("control request rejected: invalid request data")
+		case lxmf.PeerErrorNotFound:
+			return errors.New("control request rejected: peer not found")
+		}
+	case float64:
+		switch int(code) {
+		case lxmf.PeerErrorNoIdentity:
+			return errors.New("control request rejected: remote side has not identified this link")
+		case lxmf.PeerErrorNoAccess:
+			return errors.New("control request rejected: access denied")
+		case lxmf.PeerErrorInvalidData:
+			return errors.New("control request rejected: invalid request data")
+		case lxmf.PeerErrorNotFound:
+			return errors.New("control request rejected: peer not found")
+		}
+	case nil:
+	}
+	fmt.Printf("Sync requested for peer %s\n", rns.PrettyHexRep(destHash))
 	return nil
 }
 
@@ -1095,40 +1432,88 @@ func requestUnpeerPeer(target, remote string, timeout float64) error {
 	if err != nil {
 		return err
 	}
-	if _, err := controlRequest(remoteIdentity, lxmf.UnpeerRequestPath, destHash, timeout); err != nil {
+	dest, err := rns.NewDestination(remoteIdentity, rns.DestinationOUT, rns.DestinationSINGLE, lxmf.AppName, "propagation", "control")
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Broke peering with %s\n", target)
-	return nil
-}
-
-func handleRemoteCommands(configDir, rnsConfigDir, identityPath, remote string, status, peers bool, syncTarget, unpeerTarget string, timeout float64, verbosity, quietness int) error {
-	if err := remoteInit(configDir, rnsConfigDir, identityPath, verbosity, quietness); err != nil {
+	link, err := rns.NewLink(dest, nil, rns.LinkModeDefault, nil, nil)
+	if err != nil {
 		return err
 	}
-	if status || peers {
-		if err := printStatusResponse(remote, status, peers, timeout); err != nil {
-			return err
-		}
+	defer link.Teardown()
+	linkDeadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for link.Status != rns.LinkActive && time.Now().Before(linkDeadline) {
+		time.Sleep(50 * time.Millisecond)
 	}
-	if syncTarget != "" {
-		if err := requestSyncPeer(syncTarget, remote, timeout); err != nil {
-			return err
-		}
+	if link.Status != rns.LinkActive {
+		return errors.New("control link establishment timed out")
 	}
-	if unpeerTarget != "" {
-		if err := requestUnpeerPeer(unpeerTarget, remote, timeout); err != nil {
-			return err
-		}
+	link.Identify(identity)
+	time.Sleep(50 * time.Millisecond)
+	request := link.Request(lxmf.UnpeerRequestPath, destHash, nil, nil, nil, timeout)
+	if request == nil {
+		return errors.New("control request could not be sent")
 	}
+	receipt, ok := request.(*rns.RequestReceipt)
+	if !ok || receipt == nil {
+		return fmt.Errorf("unexpected control request receipt: %T", request)
+	}
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for {
+		status := receipt.GetStatus()
+		if status == rns.RequestReceiptReady || status == rns.RequestReceiptFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			return errors.New("control request timed out")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if receipt.GetStatus() == rns.RequestReceiptFailed {
+		return errors.New("control request failed")
+	}
+	response := receipt.GetResponse()
+	if response == nil {
+		return errors.New("empty response received")
+	}
+	switch code := response.(type) {
+	case int:
+		switch code {
+		case lxmf.PeerErrorNoIdentity:
+			return errors.New("control request rejected: remote side has not identified this link")
+		case lxmf.PeerErrorNoAccess:
+			return errors.New("control request rejected: access denied")
+		case lxmf.PeerErrorInvalidData:
+			return errors.New("control request rejected: invalid request data")
+		case lxmf.PeerErrorNotFound:
+			return errors.New("control request rejected: peer not found")
+		}
+	case int64:
+		switch int(code) {
+		case lxmf.PeerErrorNoIdentity:
+			return errors.New("control request rejected: remote side has not identified this link")
+		case lxmf.PeerErrorNoAccess:
+			return errors.New("control request rejected: access denied")
+		case lxmf.PeerErrorInvalidData:
+			return errors.New("control request rejected: invalid request data")
+		case lxmf.PeerErrorNotFound:
+			return errors.New("control request rejected: peer not found")
+		}
+	case float64:
+		switch int(code) {
+		case lxmf.PeerErrorNoIdentity:
+			return errors.New("control request rejected: remote side has not identified this link")
+		case lxmf.PeerErrorNoAccess:
+			return errors.New("control request rejected: access denied")
+		case lxmf.PeerErrorInvalidData:
+			return errors.New("control request rejected: invalid request data")
+		case lxmf.PeerErrorNotFound:
+			return errors.New("control request rejected: peer not found")
+		}
+	case nil:
+	}
+	fmt.Printf("Broke peering with %s\n", rns.PrettyHexRep(destHash))
 	return nil
-}
-
-func ptrOrNil(value string) *string {
-	if value == "" {
-		return nil
-	}
-	return &value
 }
 
 func main() {
@@ -1141,7 +1526,7 @@ func main() {
 	peersFlag := flag.Bool("peers", false, "display peered nodes")
 	syncTarget := flag.String("sync", "", "request a sync with the specified peer")
 	unpeerTarget := flag.String("break", "", "break peering with the specified peer")
-	timeout := flag.Float64("timeout", 5, "timeout for query operations")
+	timeout := flag.Float64("timeout", 0, "timeout for query operations")
 	remote := flag.String("remote", "", "remote propagation node destination hash")
 	identityPathOption := flag.String("identity", "", "path to identity used for remote requests")
 	example := flag.Bool("exampleconfig", false, "print verbose configuration example and exit")
@@ -1164,20 +1549,48 @@ func main() {
 		return
 	}
 
-	if *statusFlag || *peersFlag || *syncTarget != "" || *unpeerTarget != "" {
-		if err := handleRemoteCommands(*configDir, *rnsConfigDir, *identityPathOption, *remote, *statusFlag, *peersFlag, *syncTarget, *unpeerTarget, *timeout, verboseCount, quietCount); err != nil {
+	if *statusFlag || *peersFlag {
+		if *timeout <= 0 {
+			*timeout = 5
+		}
+		if err := remoteInit(*configDir, *rnsConfigDir, *identityPathOption, verboseCount, quietCount); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := printStatusResponse(*remote, *statusFlag, *peersFlag, *timeout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
 	}
-
-	if *timeout <= 0 {
-		*timeout = 5
+	if *syncTarget != "" {
+		if *timeout <= 0 {
+			*timeout = 10
+		}
+		if err := remoteInit(*configDir, *rnsConfigDir, *identityPathOption, verboseCount, quietCount); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := requestSyncPeer(*syncTarget, *remote, *timeout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
-	_ = *timeout
-	_ = *remote
-	_ = *identityPathOption
+	if *unpeerTarget != "" {
+		if *timeout <= 0 {
+			*timeout = 10
+		}
+		if err := remoteInit(*configDir, *rnsConfigDir, *identityPathOption, verboseCount, quietCount); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := requestUnpeerPeer(*unpeerTarget, *remote, *timeout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	programSetup(*configDir, *rnsConfigDir, *propagationNode, *onInbound, verboseCount, quietCount, *service)
 }

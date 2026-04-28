@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/svanichkin/configobj v0.0.1
-	github.com/svanichkin/go-reticulum v1.1.56
+	github.com/svanichkin/go-reticulum v1.1.521
 )
 
 require (

@@ -103,7 +103,7 @@ func TestPackRequiresDestinationObjectForEncryptedMethods(t *testing.T) {
 		if err != nil {
 			t.Fatalf("new message for method %d: %v", method, err)
 		}
-		msg.SourceHash = src.Hash()
+		msg.SourceHash = src.Hash
 
 		err = msg.Pack(false)
 		if err == nil {

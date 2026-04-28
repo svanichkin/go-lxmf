@@ -288,6 +288,11 @@ func asInt(v any) (int, bool) {
 	switch t := v.(type) {
 	case int:
 		return t, true
+	case *int:
+		if t == nil {
+			return 0, false
+		}
+		return *t, true
 	case int8:
 		return int(t), true
 	case int16:
@@ -308,6 +313,11 @@ func asInt(v any) (int, bool) {
 		return int(t), true
 	case float64:
 		return int(t), true
+	case bool:
+		if t {
+			return 1, true
+		}
+		return 0, true
 	default:
 		return 0, false
 	}

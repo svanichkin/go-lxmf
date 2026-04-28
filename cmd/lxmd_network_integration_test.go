@@ -140,10 +140,10 @@ func (*lxmdLoopbackTransport) GetPacketQ([]byte) *float64    { return nil }
 func findDestinationByHash(hash []byte) *rns.Destination {
 	var fallback *rns.Destination
 	for _, d := range rns.Destinations {
-		if d == nil || len(d.Hash()) == 0 {
+		if d == nil || len(d.Hash) == 0 {
 			continue
 		}
-		if string(d.Hash()) == string(hash) {
+		if string(d.Hash) == string(hash) {
 			if d.Direction == rns.DestinationIN {
 				return d
 			}
@@ -286,11 +286,11 @@ func newLXMDTestNode(t *testing.T, displayName string, propagation bool, control
 		router.RegisterDeliveryCallback(deliveryCB)
 	}
 
-	deliveryDest := router.RegisterDeliveryIdentity(id, displayName, nil)
+	deliveryDest := router.RegisterDeliveryIdentity(id, &displayName, nil)
 	if deliveryDest == nil {
 		t.Fatalf("register delivery identity returned nil")
 	}
-	_ = rns.IdentityRemember(nil, deliveryDest.Hash(), id.GetPublicKey(), nil)
+	_ = rns.IdentityRemember(nil, deliveryDest.Hash, id.GetPublicKey(), nil)
 
 	if propagation {
 		if err := router.EnablePropagation(); err != nil {
@@ -316,7 +316,7 @@ func newLXMDTestNode(t *testing.T, displayName string, propagation bool, control
 		t.Fatalf("mkdir messages dir: %v", err)
 	}
 	if node.controlDest != nil {
-		_ = rns.IdentityRemember(nil, node.controlDest.Hash(), id.GetPublicKey(), nil)
+		_ = rns.IdentityRemember(nil, node.controlDest.Hash, id.GetPublicKey(), nil)
 	}
 	return node
 }
@@ -444,7 +444,7 @@ func TestLXMDRemoteSyncAndUnpeerBetweenTwoNodes(t *testing.T) {
 	remote.router.Peers[string(peerHash)] = peer
 
 	identity = requester.identity
-	remoteHex := hex.EncodeToString(remote.controlDest.Hash())
+	remoteHex := hex.EncodeToString(remote.controlDest.Hash)
 	targetHex := hex.EncodeToString(peerHash)
 
 	if err := requestSyncPeer(targetHex, remoteHex, 3); err != nil {
@@ -541,14 +541,14 @@ func TestLXMDDaemonPropagationNodeMessageDownloadBetweenTwoNodes(t *testing.T) {
 	})
 
 	injectRemoteAnnounceForTest(t, pn.router.PropagationDestination, pn.router.GetPropagationNodeAppData())
-	if err := client.router.SetOutboundPropagationNode(pn.router.PropagationDestination.Hash()); err != nil {
+	if err := client.router.SetOutboundPropagationNode(pn.router.PropagationDestination.Hash); err != nil {
 		t.Fatalf("set outbound propagation node: %v", err)
 	}
-	if err := rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash(), pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData()); err != nil {
+	if err := rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash, pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData()); err != nil {
 		t.Fatalf("remember propagation node identity: %v", err)
 	}
 	waitForCondition(t, 2*time.Second, func() bool {
-		return rns.TransportHasPath(pn.router.PropagationDestination.Hash())
+		return rns.TransportHasPath(pn.router.PropagationDestination.Hash)
 	}, "path to propagation node")
 
 	msg, err := lxmf.NewLXMessage(client.deliveryDest, pn.deliveryDest, "hello via propagation", "pn-test", nil, lxmf.MethodPropagated, nil, nil, nil, false)
@@ -564,7 +564,7 @@ func TestLXMDDaemonPropagationNodeMessageDownloadBetweenTwoNodes(t *testing.T) {
 		t.Fatalf("expected propagation node to store propagated message, handled=%v dup=%v", handled, dup)
 	}
 
-	client.router.RequestMessagesFromPropagationNode(client.identity, 0)
+	client.router.RequestMessagesFromPropagationNode(client.identity, nil)
 
 	select {
 	case delivered := <-client.receivedMessage:
@@ -599,16 +599,16 @@ func TestLXMDDaemonPropagationUploadToNodeBetweenTwoNodes(t *testing.T) {
 	pn.router.PropagationStampCostFlexibility = 0
 
 	injectRemoteAnnounceForTest(t, pn.router.PropagationDestination, pn.router.GetPropagationNodeAppData())
-	if err := sender.router.SetOutboundPropagationNode(pn.router.PropagationDestination.Hash()); err != nil {
+	if err := sender.router.SetOutboundPropagationNode(pn.router.PropagationDestination.Hash); err != nil {
 		t.Fatalf("set sender outbound propagation node: %v", err)
 	}
-	if err := rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash(), pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData()); err != nil {
+	if err := rns.IdentityRemember(nil, pn.router.PropagationDestination.Hash, pn.identity.GetPublicKey(), pn.router.GetPropagationNodeAppData()); err != nil {
 		t.Fatalf("remember propagation node identity: %v", err)
 	}
 	waitForCondition(t, 2*time.Second, func() bool {
-		return rns.TransportHasPath(pn.router.PropagationDestination.Hash())
+		return rns.TransportHasPath(pn.router.PropagationDestination.Hash)
 	}, "path to propagation node")
-	sender.router.RequestMessagesFromPropagationNode(sender.identity, 0)
+	sender.router.RequestMessagesFromPropagationNode(sender.identity, nil)
 	waitForCondition(t, 3*time.Second, func() bool {
 		return sender.router.OutboundPropagationLink != nil && sender.router.OutboundPropagationLink.Status == rns.LinkActive
 	}, "sender propagation link establishment")
@@ -621,7 +621,7 @@ func TestLXMDDaemonPropagationUploadToNodeBetweenTwoNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("receiver destination: %v", err)
 	}
-	if err := rns.IdentityRemember(nil, receiverDest.Hash(), receiverIdentity.GetPublicKey(), nil); err != nil {
+	if err := rns.IdentityRemember(nil, receiverDest.Hash, receiverIdentity.GetPublicKey(), nil); err != nil {
 		t.Fatalf("remember receiver identity: %v", err)
 	}
 
@@ -689,7 +689,7 @@ func TestLXMDRequestSyncPeerNotFoundBetweenTwoNodes(t *testing.T) {
 	relaxControlAccessForTest(t, remote)
 
 	identity = requester.identity
-	remoteHex := hex.EncodeToString(remote.controlDest.Hash())
+	remoteHex := hex.EncodeToString(remote.controlDest.Hash)
 	targetHex := hex.EncodeToString([]byte("peer-missing-123"))
 
 	err := requestSyncPeer(targetHex, remoteHex, 3)
@@ -712,7 +712,7 @@ func TestLXMDRequestUnpeerPeerNotFoundBetweenTwoNodes(t *testing.T) {
 	relaxControlAccessForTest(t, remote)
 
 	identity = requester.identity
-	remoteHex := hex.EncodeToString(remote.controlDest.Hash())
+	remoteHex := hex.EncodeToString(remote.controlDest.Hash)
 	targetHex := hex.EncodeToString([]byte("peer-missing-123"))
 
 	err := requestUnpeerPeer(targetHex, remoteHex, 3)

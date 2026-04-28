@@ -61,7 +61,7 @@ func TestMessagePackPropagatedRequiresDestinationObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new message: %v", err)
 	}
-	msg.SourceHash = src.Hash()
+	msg.SourceHash = src.Hash
 
 	err = msg.Pack(false)
 	if err == nil {

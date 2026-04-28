@@ -24,7 +24,9 @@ const (
 
 type stampJob struct {
 	cancel     chan struct{}
+	result     chan []byte
 	cancelOnce sync.Once
+	resultOnce sync.Once
 }
 
 var (
@@ -34,7 +36,7 @@ var (
 
 func StampWorkblock(material []byte, expandRounds int) []byte {
 	if expandRounds <= 0 {
-		expandRounds = WorkblockExpandRounds
+		return []byte{}
 	}
 
 	workblock := make([]byte, 0, expandRounds*256)
@@ -66,12 +68,6 @@ func StampValue(workblock, stamp []byte) int {
 }
 
 func StampValid(stamp []byte, targetCost int, workblock []byte) bool {
-	if targetCost <= 0 {
-		return true
-	}
-	if targetCost >= 256 {
-		return false
-	}
 	result := rns.FullHash(append(append([]byte{}, workblock...), stamp...))
 	limit := new(big.Int).Lsh(big.NewInt(1), uint(256-targetCost))
 	res := new(big.Int).SetBytes(result)
@@ -118,15 +114,27 @@ func ValidatePNStampsJobMultip(transientList [][]byte, targetCost int) [][]any {
 
 	rns.Log(fmt.Sprintf("Validating %d stamps using %d workers...", len(transientList), poolCount), rns.LOG_VERBOSE)
 
-	jobs := make(chan []byte)
-	results := make(chan []any, poolCount)
+	type stampJobItem struct {
+		index int
+		data  []byte
+	}
+	type stampJobResult struct {
+		index int
+		entry []any
+	}
+
+	jobs := make(chan stampJobItem)
+	results := make(chan stampJobResult, poolCount)
 	var wg sync.WaitGroup
 	worker := func() {
 		defer wg.Done()
 		for data := range jobs {
-			transientID, lxmData, value, stampData := ValidatePNStamp(data, targetCost)
+			transientID, lxmData, value, stampData := ValidatePNStamp(data.data, targetCost)
 			if transientID != nil {
-				results <- []any{transientID, lxmData, value, stampData}
+				results <- stampJobResult{
+					index: data.index,
+					entry: []any{transientID, lxmData, value, stampData},
+				}
 			}
 		}
 	}
@@ -137,20 +145,27 @@ func ValidatePNStampsJobMultip(transientList [][]byte, targetCost int) [][]any {
 	}
 
 	go func() {
-		for _, data := range transientList {
-			jobs <- data
+		for i, data := range transientList {
+			jobs <- stampJobItem{index: i, data: data}
 		}
 		close(jobs)
 		wg.Wait()
 		close(results)
 	}()
 
-	validated := make([][]any, 0)
+	validated := make([][]any, len(transientList))
 	for res := range results {
-		validated = append(validated, []any{res[0], res[1], res[2], res[3]})
+		validated[res.index] = res.entry
+	}
+
+	filtered := make([][]any, 0, len(validated))
+	for _, entry := range validated {
+		if entry != nil {
+			filtered = append(filtered, entry)
+		}
 	}
 	rns.Log(fmt.Sprintf("Validation pool completed for %d stamps", len(transientList)), rns.LOG_VERBOSE)
-	return validated
+	return filtered
 }
 
 func ValidatePNStamps(transientList [][]byte, targetCost int) [][]any {
@@ -187,10 +202,8 @@ func GenerateStamp(messageID []byte, stampCost int, expandRounds int) ([]byte, i
 	if stamp != nil {
 		value = StampValue(workblock, stamp)
 	}
-	if duration > 0 {
-		speed := float64(rounds) / duration.Seconds()
-		rns.Log(fmt.Sprintf("Stamp with value %d generated in %s, %d rounds, %d rounds per second", value, rns.PrettyTime(duration.Seconds(), false, false), rounds, int(speed)), rns.LOG_DEBUG)
-	}
+	speed := float64(rounds) / duration.Seconds()
+	rns.Log(fmt.Sprintf("Stamp with value %d generated in %s, %d rounds, %d rounds per second", value, rns.PrettyTime(duration.Seconds(), false, false), rounds, int(speed)), rns.LOG_DEBUG)
 
 	return stamp, value
 }
@@ -201,6 +214,14 @@ func CancelWork(messageID []byte) {
 	job := activeJobs[key]
 	if job != nil {
 		job.cancelOnce.Do(func() { close(job.cancel) })
+		if job.result != nil {
+			job.resultOnce.Do(func() {
+				select {
+				case job.result <- nil:
+				default:
+				}
+			})
+		}
 		delete(activeJobs, key)
 	}
 	activeJobsMu.Unlock()
@@ -248,24 +269,27 @@ func jobSimple(stampCost int, workblock []byte, messageID []byte) ([]byte, int) 
 }
 
 func jobConcurrent(stampCost int, workblock []byte, messageID []byte) ([]byte, int) {
-	stamp := make([]byte, 0)
+	var stamp []byte
 	totalRounds := 0
+	start := time.Now()
 	cores := runtime.NumCPU()
 	jobs := cores
 	if jobs > 12 {
-		jobs = int(math.Ceil(float64(cores) / 2))
+		jobs = cores / 2
 	}
 	if jobs < 1 {
 		jobs = 1
 	}
 
-	job := &stampJob{cancel: make(chan struct{})}
+	job := &stampJob{
+		cancel: make(chan struct{}),
+		result: make(chan []byte, 1),
+	}
 	key := string(messageID)
 	activeJobsMu.Lock()
 	activeJobs[key] = job
 	activeJobsMu.Unlock()
 
-	resultCh := make(chan []byte, 1)
 	roundsCh := make(chan int, jobs)
 	var wg sync.WaitGroup
 
@@ -275,22 +299,29 @@ func jobConcurrent(stampCost int, workblock []byte, messageID []byte) ([]byte, i
 		pstamp := make([]byte, 256/8)
 		_, _ = crypto_rand.Read(pstamp)
 
-		for !StampValid(pstamp, stampCost, workblock) {
+		for {
 			select {
 			case <-job.cancel:
 				roundsCh <- rounds
 				return
 			default:
 			}
+			if StampValid(pstamp, stampCost, workblock) {
+				job.resultOnce.Do(func() {
+					job.result <- append([]byte{}, pstamp...)
+				})
+				job.cancelOnce.Do(func() { close(job.cancel) })
+				roundsCh <- rounds
+				return
+			}
+
 			_, _ = crypto_rand.Read(pstamp)
 			rounds++
+			if rounds%2500 == 0 {
+				speed := float64(rounds) / time.Since(start).Seconds()
+				rns.Log(fmt.Sprintf("Stamp generation running. %d rounds completed so far, %d rounds per second", rounds, int(speed)), rns.LOG_DEBUG)
+			}
 		}
-
-		select {
-		case resultCh <- pstamp:
-		default:
-		}
-		roundsCh <- rounds
 	}
 
 	rns.Log(fmt.Sprintf("Starting %d stamp generation workers", jobs), rns.LOG_DEBUG)
@@ -299,12 +330,7 @@ func jobConcurrent(stampCost int, workblock []byte, messageID []byte) ([]byte, i
 		go worker()
 	}
 
-	select {
-	case stamp = <-resultCh:
-		job.cancelOnce.Do(func() { close(job.cancel) })
-	case <-job.cancel:
-		stamp = nil
-	}
+	stamp = <-job.result
 	wg.Wait()
 	close(roundsCh)
 	for rounds := range roundsCh {
@@ -334,60 +360,93 @@ func jobAndroid(stampCost int, workblock []byte, messageID []byte) ([]byte, int)
 	activeJobs[key] = job
 	activeJobsMu.Unlock()
 
+	rns.Log(fmt.Sprintf("Dispatching %d workers for stamp generation...", jobs), rns.LOG_DEBUG)
+
 	for stamp == nil {
-		var (
-			wg     sync.WaitGroup
-			mu     sync.Mutex
-			found  []byte
-			rounds int
-		)
-		wg.Add(jobs)
-		for i := 0; i < jobs; i++ {
-			go func() {
-				defer wg.Done()
-				pstamp := make([]byte, 256/8)
-				for n := 0; n < roundsPerWorker; n++ {
-					select {
-					case <-job.cancel:
-						return
-					default:
-					}
-					_, _ = crypto_rand.Read(pstamp)
-					mu.Lock()
-					rounds++
-					mu.Unlock()
-					if StampValid(pstamp, stampCost, workblock) {
-						mu.Lock()
-						if found == nil {
-							found = append([]byte{}, pstamp...)
-						}
-						mu.Unlock()
-						return
-					}
-				}
-			}()
-		}
-
-		wg.Wait()
-		totalRounds += rounds
-
+		canceled := false
 		select {
 		case <-job.cancel:
-			activeJobsMu.Lock()
-			delete(activeJobs, key)
-			activeJobsMu.Unlock()
-			return nil, totalRounds
+			canceled = true
 		default:
 		}
-
-		if found != nil {
-			stamp = found
+		if canceled {
 			break
 		}
-		elapsed := time.Since(start).Seconds()
-		if elapsed > 0 {
-			speed := float64(totalRounds) / elapsed
-			rns.Log(fmt.Sprintf("Stamp generation running. %d rounds completed so far, %d rounds per second", totalRounds, int(speed)), rns.LOG_DEBUG)
+
+		type workerResult struct {
+			index  int
+			stamp  []byte
+			rounds int
+		}
+
+		results := make(chan workerResult, jobs)
+		var wg sync.WaitGroup
+
+		worker := func(procnum int) {
+			defer wg.Done()
+			rounds := 0
+			foundStamp := []byte(nil)
+
+			for {
+				canceled := false
+				select {
+				case <-job.cancel:
+					canceled = true
+				default:
+				}
+				if canceled {
+					break
+				}
+
+				pstamp := make([]byte, 256/8)
+				_, _ = crypto_rand.Read(pstamp)
+				rounds++
+
+				if StampValid(pstamp, stampCost, workblock) {
+					foundStamp = append([]byte{}, pstamp...)
+					break
+				}
+
+				if rounds >= roundsPerWorker {
+					break
+				}
+			}
+
+			results <- workerResult{index: procnum, stamp: foundStamp, rounds: rounds}
+		}
+
+		wg.Add(jobs)
+		for i := 0; i < jobs; i++ {
+			go worker(i)
+		}
+
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		for res := range results {
+			totalRounds += res.rounds
+			if res.stamp != nil {
+				stamp = res.stamp
+			}
+		}
+
+		if stamp == nil {
+			canceled := false
+			select {
+			case <-job.cancel:
+				canceled = true
+			default:
+			}
+			if canceled {
+				break
+			}
+			elapsed := time.Since(start).Seconds()
+			if elapsed > 0 {
+				speed := float64(totalRounds) / elapsed
+				rns.Log(fmt.Sprintf("Stamp generation running. %d rounds completed so far, %d rounds per second", totalRounds, int(speed)), rns.LOG_DEBUG)
+			}
 		}
 	}
 
@@ -395,5 +454,14 @@ func jobAndroid(stampCost int, workblock []byte, messageID []byte) ([]byte, int)
 	delete(activeJobs, key)
 	activeJobsMu.Unlock()
 
+	if job != nil {
+		select {
+		case <-job.cancel:
+			if stamp == nil {
+				return nil, totalRounds
+			}
+		default:
+		}
+	}
 	return stamp, totalRounds
 }

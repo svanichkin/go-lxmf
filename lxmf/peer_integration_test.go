@@ -79,11 +79,9 @@ func TestPeerRoundTripSerializationPreservesZeroFlexibility(t *testing.T) {
 		t.Fatalf("peer destination: %v", err)
 	}
 
-	if err := rns.IdentityRemember([]byte("packet"), peerDest.Hash(), peerIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember peer identity: %v", err)
-	}
+	rns.IdentityRemember([]byte("packet"), peerDest.Hash, peerIdentity.GetPublicKey(), nil)
 
-	peer := NewLXMPeer(router, peerDest.Hash(), PeerDefaultSyncStrategy)
+	peer := NewLXMPeer(router, peerDest.Hash, PeerDefaultSyncStrategy)
 	peer.PeeringCost = 18
 	peer.PropagationStampCost = 16
 	peer.PropagationStampCostFlexibility = 0

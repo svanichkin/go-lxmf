@@ -2,7 +2,6 @@ package lxmf
 
 import (
 	"testing"
-	"time"
 
 	"github.com/svanichkin/go-reticulum/rns"
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
@@ -19,7 +18,7 @@ func TestPNAnnounceRoundTrip(t *testing.T) {
 	}
 	router.Name = "node"
 	router.PropagationNode = true
-	router.PropagationNodeStartTime = time.Now().Unix()
+	router.PropagationNodeStartTime = nowSeconds()
 
 	appData := router.GetPropagationNodeAppData()
 	if !PNAnnounceDataIsValid(appData) {

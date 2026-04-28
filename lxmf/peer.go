@@ -386,13 +386,13 @@ func (p *LXMPeer) Sync() {
 		return
 	}
 
-	if !rns.TransportHasPath(p.DestinationHash) {
+	if !rns.HasPath(p.DestinationHash) {
 		rns.Log("No path to peer "+rns.PrettyHexRep(p.DestinationHash)+" exists, requesting...", rns.LOG_DEBUG)
-		rns.TransportRequestPath(p.DestinationHash)
+		rns.RequestPath(p.DestinationHash, nil, nil, false)
 		time.Sleep(time.Duration(PeerPathRequestGrace * float64(time.Second)))
 	}
 
-	if !rns.TransportHasPath(p.DestinationHash) {
+	if !rns.HasPath(p.DestinationHash) {
 		rns.Log("Path request was not answered, retrying sync with peer "+rns.PrettyHexRep(p.DestinationHash)+" later", rns.LOG_DEBUG)
 		return
 	}
@@ -425,7 +425,7 @@ func (p *LXMPeer) Sync() {
 		rns.Log("Establishing link for sync to peer "+rns.PrettyHexRep(p.DestinationHash)+"...", rns.LOG_DEBUG)
 		p.SyncBackoff += PeerSyncBackoffStep
 		p.NextSyncAttempt = nowSeconds() + p.SyncBackoff
-		link, err := rns.NewOutgoingLink(p.Destination, rns.LinkModeDefault, p.LinkEstablished, p.LinkClosed)
+		link, err := rns.NewLink(p.Destination, nil, rns.LinkModeDefault, p.LinkEstablished, p.LinkClosed)
 		if err != nil {
 			rns.Log("Could not establish sync link for "+rns.PrettyHexRep(p.DestinationHash)+": "+err.Error(), rns.LOG_ERROR)
 			return
@@ -458,7 +458,7 @@ func (p *LXMPeer) Sync() {
 	for _, transientID := range unhandled {
 		entry := p.Router.PropagationEntries[string(transientID)]
 		if entry != nil {
-			if p.Router.GetStampValue(transientID) < minAcceptedCost {
+			if stampValue := p.Router.GetStampValue(transientID); stampValue == nil || *stampValue < minAcceptedCost {
 				lowValueIDs = append(lowValueIDs, transientID)
 			} else {
 				unhandledEntries = append(unhandledEntries, unhandledEntry{
@@ -514,7 +514,7 @@ func (p *LXMPeer) Sync() {
 
 	offer := []any{p.PeeringKey[0], unhandledIDs}
 
-	rns.Log(fmt.Sprintf("Offering %d messages to peer %s (%s)", len(unhandledIDs), rns.PrettyHexRep(p.Destination.Hash()), rns.PrettySize(float64(lenMustPack(unhandledIDs)))), rns.LOG_VERBOSE)
+	rns.Log(fmt.Sprintf("Offering %d messages to peer %s (%s)", len(unhandledIDs), rns.PrettyHexRep(p.Destination.Hash), rns.PrettySize(float64(lenMustPack(unhandledIDs)))), rns.LOG_VERBOSE)
 	p.LastOffer = copyIDList(unhandledIDs)
 	if p.Link != nil {
 		p.Link.Request(OfferRequestPath, offer, p.OfferResponse, p.RequestFailed, nil, 0)
@@ -546,7 +546,7 @@ func (p *LXMPeer) OfferResponse(receipt *rns.RequestReceipt) {
 	if receipt == nil {
 		return
 	}
-	response := receipt.Response()
+	response := receipt.GetResponse()
 
 	if code, ok := intFromAny(response); ok {
 		switch code {
@@ -563,7 +563,7 @@ func (p *LXMPeer) OfferResponse(receipt *rns.RequestReceipt) {
 		case PeerErrorNoAccess:
 			rns.Log("Remote indicated that access was denied, breaking peering", rns.LOG_VERBOSE)
 			if p.Router != nil {
-				p.Router.Unpeer(p.DestinationHash, 0)
+				p.Router.Unpeer(p.DestinationHash, nil)
 			}
 			return
 		case PeerErrorThrottled:
@@ -693,7 +693,7 @@ func (p *LXMPeer) ResourceConcluded(resource *rns.Resource) {
 	if resource == nil {
 		return
 	}
-	if resource.Status() == rns.ResourceComplete {
+	if resource.Status == rns.ResourceComplete {
 		if p.CurrentlyTransferringMessages == nil {
 			rns.Log(fmt.Sprintf("Sync transfer completed on %s, but transferred message index was unavailable. Aborting.", p), rns.LOG_ERROR)
 			if p.Link != nil {

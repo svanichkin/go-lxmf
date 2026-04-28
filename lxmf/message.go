@@ -117,10 +117,11 @@ type LXMessage struct {
 	Q        *float64
 
 	Stamp                   []byte
-	StampCost               *int
+	StampCost               any
 	StampValue              *int
 	StampValid              bool
 	StampChecked            bool
+	StampGenerationFailed   bool
 	PropagationStamp        []byte
 	PropagationStampValue   *int
 	PropagationStampValid   bool
@@ -138,9 +139,10 @@ type LXMessage struct {
 	Representation          byte
 	DesiredMethod           byte
 	DeliveryAttempts        int
-	NextDeliveryAttempt     int64
+	NextDeliveryAttempt     float64
+	PathRequestRetried      bool
 	TransportEncrypted      bool
-	TransportEncryption     string
+	TransportEncryption     any
 	PacketRepresentation    *rns.Packet
 	ResourceRepresentation  *rns.Resource
 	DeliveryDestination     any
@@ -150,7 +152,7 @@ type LXMessage struct {
 	DeferredStampGenerating bool
 }
 
-func NewLXMessage(destination, source *rns.Destination, content, title string, fields map[any]any, desiredMethod byte, destinationHash, sourceHash []byte, stampCost *int, includeTicket bool) (*LXMessage, error) {
+func NewLXMessage(destination, source *rns.Destination, content, title string, fields map[any]any, desiredMethod byte, destinationHash, sourceHash []byte, stampCost any, includeTicket bool) (*LXMessage, error) {
 	msg := &LXMessage{
 		StampCost:             stampCost,
 		IncludeTicket:         includeTicket,
@@ -164,7 +166,7 @@ func NewLXMessage(destination, source *rns.Destination, content, title string, f
 
 	if destination != nil {
 		msg.destination = destination
-		msg.DestinationHash = destination.Hash()
+		msg.DestinationHash = destination.Hash
 	} else if destinationHash != nil {
 		msg.DestinationHash = copyBytes(destinationHash)
 	} else {
@@ -173,7 +175,7 @@ func NewLXMessage(destination, source *rns.Destination, content, title string, f
 
 	if source != nil {
 		msg.source = source
-		msg.SourceHash = source.Hash()
+		msg.SourceHash = source.Hash
 	} else if sourceHash != nil {
 		msg.SourceHash = copyBytes(sourceHash)
 	} else {
@@ -258,7 +260,7 @@ func (m *LXMessage) SetDestination(destination *rns.Destination) error {
 		return errors.New("invalid destination set on LXMessage")
 	}
 	m.destination = destination
-	m.DestinationHash = destination.Hash()
+	m.DestinationHash = destination.Hash
 	return nil
 }
 
@@ -270,7 +272,7 @@ func (m *LXMessage) SetSource(source *rns.Destination) error {
 		return errors.New("invalid source set on LXMessage")
 	}
 	m.source = source
-	m.SourceHash = source.Hash()
+	m.SourceHash = source.Hash
 	return nil
 }
 
@@ -330,7 +332,12 @@ func (m *LXMessage) GetStamp(timeout *time.Duration) []byte {
 		return m.Stamp
 	}
 
-	generated, value := generateStampWithTimeout(m.MessageID, *m.StampCost, WorkblockExpandRounds, timeout)
+	stampCost, ok := asInt(m.StampCost)
+	if !ok {
+		m.StampValue = nil
+		return nil
+	}
+	generated, value := generateStampWithTimeout(m.MessageID, stampCost, WorkblockExpandRounds, timeout)
 	if generated != nil {
 		m.StampValue = &value
 		m.StampValid = true
@@ -613,16 +620,16 @@ func (m *LXMessage) resourceConcluded(res *rns.Resource) {
 	if res == nil {
 		return
 	}
-	if res.Status() == rns.ResourceComplete {
+	if res.Status == rns.ResourceComplete {
 		m.markDelivered(nil)
 		return
 	}
-	if res.Status() == rns.ResourceRejected {
+	if res.Status == rns.ResourceRejected {
 		m.State = MessageRejected
 		return
 	}
-	if m.State != MessageCancelled && res.Link() != nil {
-		res.Link().Teardown()
+	if m.State != MessageCancelled && res.Link != nil {
+		res.Link.Teardown()
 		m.State = MessageOutbound
 	}
 }
@@ -631,12 +638,12 @@ func (m *LXMessage) propagationResourceConcluded(res *rns.Resource) {
 	if res == nil {
 		return
 	}
-	if res.Status() == rns.ResourceComplete {
+	if res.Status == rns.ResourceComplete {
 		m.markPropagated(nil)
 		return
 	}
-	if m.State != MessageCancelled && res.Link() != nil {
-		res.Link().Teardown()
+	if m.State != MessageCancelled && res.Link != nil {
+		res.Link.Teardown()
 		m.State = MessageOutbound
 	}
 }
@@ -669,11 +676,11 @@ func (m *LXMessage) asPacket() *rns.Packet {
 	}
 	switch m.Method {
 	case MethodOpportunistic:
-		return rns.NewPacket(m.DeliveryDestination, m.Packed[DestinationLength:])
+		return rns.NewPacket(m.DeliveryDestination, m.Packed[DestinationLength:], rns.PacketDATA, rns.PacketNONE, 0, rns.Header1, nil, nil, true, rns.PacketFLAG_UNSET)
 	case MethodDirect:
-		return rns.NewPacket(m.DeliveryDestination, m.Packed)
+		return rns.NewPacket(m.DeliveryDestination, m.Packed, rns.PacketDATA, rns.PacketNONE, 0, rns.Header1, nil, nil, true, rns.PacketFLAG_UNSET)
 	case MethodPropagated:
-		return rns.NewPacket(m.DeliveryDestination, m.PropagationPacked)
+		return rns.NewPacket(m.DeliveryDestination, m.PropagationPacked, rns.PacketDATA, rns.PacketNONE, 0, rns.Header1, nil, nil, true, rns.PacketFLAG_UNSET)
 	default:
 		return nil
 	}
@@ -860,8 +867,8 @@ func UnpackFromBytes(lxmfBytes []byte, originalMethod byte) (*LXMessage, error) 
 	msg.SetTitleFromBytes(titleBytes)
 	msg.SetContentFromBytes(contentBytes)
 
-	if source != nil && source.Identity() != nil {
-		if source.Identity().Validate(signature, signedPart) {
+	if source != nil && source.Identity != nil {
+		if source.Identity.Validate(signature, signedPart) {
 			msg.SignatureValidated = true
 		} else {
 			msg.SignatureValidated = false

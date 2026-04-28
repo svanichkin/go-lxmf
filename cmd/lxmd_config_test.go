@@ -102,7 +102,7 @@ func TestSetRemotePathsDetectsDir(t *testing.T) {
 }
 
 func TestRenderStatusResponseShowsPeerDetails(t *testing.T) {
-	now := time.Now().Unix()
+	now := float64(time.Now().UnixNano()) / 1e9
 	stats := map[string]any{
 		"destination_hash": "deadbeef",
 		"uptime":           60,

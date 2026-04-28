@@ -20,8 +20,8 @@ func TestDeliveryAnnounceHandlerAspectFilter(t *testing.T) {
 func TestDeliveryAnnounceHandlerUpdatesStampCost(t *testing.T) {
 	storage := t.TempDir()
 	router := &LXMRouter{
-		StoragePath:       storage,
-		OutboundStampCosts: map[string]stampCostEntry{},
+		StoragePath:        storage,
+		OutboundStampCosts: map[string][]any{},
 	}
 	handler := NewDeliveryAnnounceHandler(router)
 
@@ -37,19 +37,22 @@ func TestDeliveryAnnounceHandlerUpdatesStampCost(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected outbound stamp cost entry to be stored")
 	}
-	if entry.Cost != 12 {
-		t.Fatalf("expected cost 12, got %d", entry.Cost)
+	if len(entry) < 2 {
+		t.Fatalf("expected outbound stamp cost list, got %#v", entry)
+	}
+	if int(floatFromAny(entry[1])) != 12 {
+		t.Fatalf("expected cost 12, got %#v", entry[1])
 	}
 }
 
 func TestPropagationAnnounceHandlerAutoPeers(t *testing.T) {
 	router := &LXMRouter{
-		PropagationNode:  true,
-		AutoPeer:         true,
-		AutoPeerMaxDepth: rns.PathfinderMaxHops,
-		MaxPeers:         10,
-		MaxPeeringCost:   MaxPeeringCostDefault,
-		Peers:            map[string]*LXMPeer{},
+		PropagationNode:     true,
+		AutoPeer:            true,
+		AutoPeerMaxDepth:    rns.PathfinderMaxHops,
+		MaxPeers:            10,
+		MaxPeeringCost:      MaxPeeringCostDefault,
+		Peers:               map[string]*LXMPeer{},
 		DefaultSyncStrategy: PeerDefaultSyncStrategy,
 	}
 	handler := NewPropagationAnnounceHandler(router)
@@ -160,12 +163,12 @@ func TestPropagationAnnounceHandlerStaticPeerIgnoresPathResponseAfterFirstContac
 	}
 	destHash := []byte("static-peer-1234")
 	router.Peers[string(destHash)] = &LXMPeer{
-		Router:            router,
-		DestinationHash:   copyBytes(destHash),
-		LastHeard:         10,
-		PeeringTimebase:   1,
+		Router:               router,
+		DestinationHash:      copyBytes(destHash),
+		LastHeard:            10,
+		PeeringTimebase:      1,
 		PropagationSyncLimit: 111,
-		PeeringCost:       9,
+		PeeringCost:          9,
 	}
 	handler := NewPropagationAnnounceHandler(router)
 

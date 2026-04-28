@@ -534,8 +534,8 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 		}
 	}
 
-	lxmfDestination = messageRouter.RegisterDeliveryIdentity(identity, activeConfig.DisplayName, nil)
-	_ = rns.IdentityRemember(nil, lxmfDestination.Hash(), identity.GetPublicKey(), nil)
+	lxmfDestination = messageRouter.RegisterDeliveryIdentity(identity, ptrOrNil(activeConfig.DisplayName), nil)
+	_ = rns.IdentityRemember(nil, lxmfDestination.Hash, identity.GetPublicKey(), nil)
 	if activeConfig.AuthRequired {
 		messageRouter.SetAuthentication(true)
 		for _, allowed := range activeConfig.AllowedIdentities {
@@ -563,11 +563,11 @@ func programSetup(configDir, rnsConfigDir string, runPN bool, onInbound string, 
 	if runPN || activeConfig.EnablePropagationNode {
 		messageRouter.EnablePropagation()
 		if messageRouter.PropagationDestination != nil {
-			rns.Log("LXMF Propagation Node started on "+rns.PrettyHexRep(messageRouter.PropagationDestination.Hash()), rns.LOG_NOTICE)
+			rns.Log("LXMF Propagation Node started on "+rns.PrettyHexRep(messageRouter.PropagationDestination.Hash), rns.LOG_NOTICE)
 		}
 	}
 
-	rns.Log("LXMF Router ready to receive on "+rns.PrettyHexRep(lxmfDestination.Hash()), rns.LOG_NOTICE)
+	rns.Log("LXMF Router ready to receive on "+rns.PrettyHexRep(lxmfDestination.Hash), rns.LOG_NOTICE)
 	time.Sleep(100 * time.Millisecond)
 	go deferredStartJobs()
 
@@ -588,7 +588,7 @@ func jobs() {
 	for {
 		if messageRouter != nil && lxmfDestination != nil && activeConfig.PeerAnnounceInterval > 0 {
 			if time.Since(lastPeerAnnounce) >= activeConfig.PeerAnnounceInterval {
-				messageRouter.Announce(lxmfDestination.Hash(), nil)
+				messageRouter.Announce(lxmfDestination.Hash, nil)
 				lastPeerAnnounce = time.Now()
 			}
 		}
@@ -610,7 +610,7 @@ func deferredStartJobs() {
 	rns.Log("Running deferred start jobs", rns.LOG_DEBUG)
 	if activeConfig.PeerAnnounceAtStart {
 		rns.Log("Sending announce for LXMF delivery destination", rns.LOG_EXTREME)
-		messageRouter.Announce(lxmfDestination.Hash(), nil)
+		messageRouter.Announce(lxmfDestination.Hash, nil)
 	}
 	if activeConfig.NodeAnnounceAtStart {
 		rns.Log("Sending announce for LXMF Propagation Node", rns.LOG_EXTREME)

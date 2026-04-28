@@ -97,9 +97,9 @@ func TestRouterEnablePropagationIndexesStore(t *testing.T) {
 	for i := range transientID {
 		transientID[i] = byte(i)
 	}
-	received := time.Now().Unix()
+	received := float64(time.Now().UnixNano()) / 1e9
 	stampValue := 3
-	filename := hex.EncodeToString(transientID) + "_" + strconv.FormatInt(received, 10) + "_" + strconv.Itoa(stampValue)
+	filename := hex.EncodeToString(transientID) + "_" + strconv.FormatFloat(received, 'f', -1, 64) + "_" + strconv.Itoa(stampValue)
 	path := filepath.Join(messageDir, filename)
 
 	payload := make([]byte, DestinationLength)
@@ -146,11 +146,11 @@ func TestRouterLXMDeliveryStampEnforcementOverrides(t *testing.T) {
 
 	router := &LXMRouter{
 		DeliveryConfigs: map[string]*deliveryConfig{
-			string(dest.Hash()): {StampCost: &cost},
+			string(dest.Hash): &deliveryConfig{},
 		},
-		enforceStamps: true,
+		enforceStamps:    true,
 		AvailableTickets: newAvailableTickets(),
-		LocallyDelivered: map[string]int64{},
+		LocallyDelivered: map[string]float64{},
 	}
 
 	if ok := router.LXMDelivery(msg.Packed, rns.DestinationSINGLE, nil, nil, MethodOpportunistic, true, false); !ok {
@@ -177,7 +177,8 @@ func TestRouterLXMDeliveryBetweenTwoIdentities(t *testing.T) {
 		t.Fatalf("new receiver router: %v", err)
 	}
 
-	receiverDest := receiverRouter.RegisterDeliveryIdentity(receiverIdentity, "receiver", nil)
+	receiverDisplayName := "receiver"
+	receiverDest := receiverRouter.RegisterDeliveryIdentity(receiverIdentity, &receiverDisplayName, nil)
 	if receiverDest == nil {
 		t.Fatalf("register receiver delivery identity: nil destination")
 	}
@@ -187,12 +188,8 @@ func TestRouterLXMDeliveryBetweenTwoIdentities(t *testing.T) {
 		t.Fatalf("sender destination: %v", err)
 	}
 
-	if err := rns.IdentityRemember(nil, receiverDest.Hash(), receiverIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember receiver identity: %v", err)
-	}
-	if err := rns.IdentityRemember(nil, senderDest.Hash(), senderIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember sender identity: %v", err)
-	}
+	rns.IdentityRemember(nil, receiverDest.Hash, receiverIdentity.GetPublicKey(), nil)
+	rns.IdentityRemember(nil, senderDest.Hash, senderIdentity.GetPublicKey(), nil)
 
 	fields := map[any]any{FieldDebug: "e2e"}
 	outbound, err := NewLXMessage(receiverDest, senderDest, "hello receiver", "greeting", fields, MethodOpportunistic, nil, nil, nil, false)
@@ -234,10 +231,10 @@ func TestRouterLXMDeliveryBetweenTwoIdentities(t *testing.T) {
 	if !fieldPreserved {
 		t.Fatalf("expected delivered fields to preserve payload, got %#v", delivered.Fields)
 	}
-	if string(delivered.DestinationHash) != string(receiverDest.Hash()) {
+	if string(delivered.DestinationHash) != string(receiverDest.Hash) {
 		t.Fatalf("unexpected destination hash on delivered message")
 	}
-	if string(delivered.SourceHash) != string(senderDest.Hash()) {
+	if string(delivered.SourceHash) != string(senderDest.Hash) {
 		t.Fatalf("unexpected source hash on delivered message")
 	}
 	if !delivered.Incoming {
@@ -269,7 +266,8 @@ func TestRouterDeliveryPacketBetweenTwoIdentities(t *testing.T) {
 		t.Fatalf("new receiver router: %v", err)
 	}
 
-	receiverDest := receiverRouter.RegisterDeliveryIdentity(receiverIdentity, "receiver", nil)
+	receiverDisplayName := "receiver"
+	receiverDest := receiverRouter.RegisterDeliveryIdentity(receiverIdentity, &receiverDisplayName, nil)
 	if receiverDest == nil {
 		t.Fatalf("register receiver delivery identity: nil destination")
 	}
@@ -279,12 +277,8 @@ func TestRouterDeliveryPacketBetweenTwoIdentities(t *testing.T) {
 		t.Fatalf("sender destination: %v", err)
 	}
 
-	if err := rns.IdentityRemember(nil, receiverDest.Hash(), receiverIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember receiver identity: %v", err)
-	}
-	if err := rns.IdentityRemember(nil, senderDest.Hash(), senderIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember sender identity: %v", err)
-	}
+	rns.IdentityRemember(nil, receiverDest.Hash, receiverIdentity.GetPublicKey(), nil)
+	rns.IdentityRemember(nil, senderDest.Hash, senderIdentity.GetPublicKey(), nil)
 
 	outbound, err := NewLXMessage(receiverDest, senderDest, "hello via packet", "packet", nil, MethodOpportunistic, nil, nil, nil, false)
 	if err != nil {
@@ -301,7 +295,7 @@ func TestRouterDeliveryPacketBetweenTwoIdentities(t *testing.T) {
 	})
 
 	packetPayload := append([]byte{}, outbound.Packed[DestinationLength:]...)
-	packet := rns.NewPacket(receiverDest, packetPayload)
+	packet := rns.NewPacket(receiverDest, packetPayload, rns.PacketTypeData, rns.PacketCtxNone, rns.Broadcast, rns.HeaderType1, nil, nil, false, rns.FlagUnset)
 	if packet == nil {
 		t.Fatalf("new packet: nil")
 	}
@@ -333,10 +327,10 @@ func TestRouterDeliveryPacketBetweenTwoIdentities(t *testing.T) {
 	if delivered.Q == nil || *delivered.Q != q {
 		t.Fatalf("expected delivered Q %.2f, got %#v", q, delivered.Q)
 	}
-	if string(delivered.DestinationHash) != string(receiverDest.Hash()) {
+	if string(delivered.DestinationHash) != string(receiverDest.Hash) {
 		t.Fatalf("unexpected destination hash on delivered message")
 	}
-	if string(delivered.SourceHash) != string(senderDest.Hash()) {
+	if string(delivered.SourceHash) != string(senderDest.Hash) {
 		t.Fatalf("unexpected source hash on delivered message")
 	}
 	if !delivered.SignatureValidated {
@@ -359,7 +353,8 @@ func TestRouterDeliveryLinkEstablishedDirectCallbackBetweenTwoIdentities(t *test
 		t.Fatalf("new receiver router: %v", err)
 	}
 
-	receiverDest := receiverRouter.RegisterDeliveryIdentity(receiverIdentity, "receiver", nil)
+	receiverDisplayName := "receiver"
+	receiverDest := receiverRouter.RegisterDeliveryIdentity(receiverIdentity, &receiverDisplayName, nil)
 	if receiverDest == nil {
 		t.Fatalf("register receiver delivery identity: nil destination")
 	}
@@ -369,12 +364,8 @@ func TestRouterDeliveryLinkEstablishedDirectCallbackBetweenTwoIdentities(t *test
 		t.Fatalf("sender destination: %v", err)
 	}
 
-	if err := rns.IdentityRemember(nil, receiverDest.Hash(), receiverIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember receiver identity: %v", err)
-	}
-	if err := rns.IdentityRemember(nil, senderDest.Hash(), senderIdentity.GetPublicKey(), nil); err != nil {
-		t.Fatalf("remember sender identity: %v", err)
-	}
+	rns.IdentityRemember(nil, receiverDest.Hash, receiverIdentity.GetPublicKey(), nil)
+	rns.IdentityRemember(nil, senderDest.Hash, senderIdentity.GetPublicKey(), nil)
 
 	outbound, err := NewLXMessage(receiverDest, senderDest, "hello direct", "direct", nil, MethodDirect, nil, nil, nil, false)
 	if err != nil {
@@ -497,11 +488,11 @@ func TestRouterAnnounceDrivenMessageDeliveryBetweenTwoIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("announce destination: %v", err)
 	}
-	receiverRouter.DeliveryConfigs[string(announceDest.Hash())] = &deliveryConfig{
-		DisplayName: "receiver",
-		StampCost:   &stampCost,
+	receiverDisplayName := "receiver"
+	receiverRouter.DeliveryConfigs[string(announceDest.Hash)] = &deliveryConfig{
+		DisplayName: &receiverDisplayName,
 	}
-	announcePacket := announceDest.Announce(receiverRouter.GetAnnounceAppData(announceDest.Hash()), false, nil, nil, false)
+	announcePacket := announceDest.Announce(receiverRouter.GetAnnounceAppData(announceDest.Hash), false, nil, nil, false)
 	if announcePacket == nil {
 		t.Fatalf("expected announce packet")
 	}
@@ -517,18 +508,18 @@ func TestRouterAnnounceDrivenMessageDeliveryBetweenTwoIdentities(t *testing.T) {
 	rns.Inbound(append([]byte(nil), announcePacket.Raw...), nil)
 
 	deadline := time.Now().Add(2 * time.Second)
-	for !rns.TransportHasPath(announceDest.Hash()) && time.Now().Before(deadline) {
+	for !rns.HasPath(announceDest.Hash) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !rns.TransportHasPath(announceDest.Hash()) {
+	if !rns.HasPath(announceDest.Hash) {
 		t.Fatalf("expected receiver announce to create a transport path")
 	}
-	if entry, ok := senderRouter.OutboundStampCosts[string(announceDest.Hash())]; !ok {
+	if entry, ok := senderRouter.OutboundStampCosts[string(announceDest.Hash)]; !ok {
 		t.Fatalf("expected sender router to learn receiver delivery announce metadata")
-	} else if entry.Cost != stampCost {
-		t.Fatalf("expected learned stamp cost %d, got %d", stampCost, entry.Cost)
+	} else if len(entry) < 2 || int(floatFromAny(entry[1])) != stampCost {
+		t.Fatalf("expected learned stamp cost %d, got %#v", stampCost, entry)
 	}
-	if recalled := rns.IdentityRecall(announceDest.Hash()); recalled == nil {
+	if recalled := rns.IdentityRecall(announceDest.Hash); recalled == nil {
 		t.Fatalf("expected receiver identity to be remembered after announce")
 	}
 
@@ -538,10 +529,9 @@ func TestRouterAnnounceDrivenMessageDeliveryBetweenTwoIdentities(t *testing.T) {
 	}
 	receiverDest.SetPacketCallback(receiverRouter.DeliveryPacket)
 	receiverDest.SetLinkEstablishedCallback(receiverRouter.DeliveryLinkEstablished)
-	receiverRouter.DeliveryDestinations[string(receiverDest.Hash())] = receiverDest
-	receiverRouter.DeliveryConfigs[string(receiverDest.Hash())] = &deliveryConfig{
-		DisplayName: "receiver",
-		StampCost:   nil,
+	receiverRouter.DeliveryDestinations[string(receiverDest.Hash)] = receiverDest
+	receiverRouter.DeliveryConfigs[string(receiverDest.Hash)] = &deliveryConfig{
+		DisplayName: &receiverDisplayName,
 	}
 
 	outbound, err := NewLXMessage(receiverDest, senderDest, "hello after announce", "announced", nil, MethodOpportunistic, nil, nil, nil, false)
@@ -565,10 +555,10 @@ func TestRouterAnnounceDrivenMessageDeliveryBetweenTwoIdentities(t *testing.T) {
 		if delivered.TitleAsString() != "announced" {
 			t.Fatalf("unexpected delivered title: %q", delivered.TitleAsString())
 		}
-		if string(delivered.SourceHash) != string(senderDest.Hash()) {
+		if string(delivered.SourceHash) != string(senderDest.Hash) {
 			t.Fatalf("unexpected source hash on delivered message")
 		}
-		if string(delivered.DestinationHash) != string(receiverDest.Hash()) {
+		if string(delivered.DestinationHash) != string(receiverDest.Hash) {
 			t.Fatalf("unexpected destination hash on delivered message")
 		}
 		if !delivered.SignatureValidated {

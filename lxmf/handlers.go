@@ -34,7 +34,7 @@ func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, annou
 		return
 	}
 	if stampCost, ok := StampCostFromAppData(appData); ok {
-		h.Router.UpdateStampCost(destinationHash, &stampCost)
+		h.Router.UpdateStampCost(destinationHash, stampCost)
 	}
 
 	for _, msg := range h.Router.PendingOutbound {
@@ -43,7 +43,7 @@ func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, annou
 		}
 		if bytesEqual(destinationHash, msg.DestinationHash) {
 			if msg.Method == MethodDirect || msg.Method == MethodOpportunistic {
-				msg.NextDeliveryAttempt = time.Now().Unix()
+				msg.NextDeliveryAttempt = nowSeconds()
 				go func() {
 					for h.Router.outboundProcessingLockLocked() {
 						time.Sleep(100 * time.Millisecond)
@@ -104,7 +104,7 @@ func (h *PropagationAnnounceHandler) handleAnnounce(destinationHash []byte, anno
 	nodeTimebase, _ := asInt(data[1])
 	propagationEnabled, _ := data[2].(bool)
 	propagationTransferLimit, _ := asInt(data[3])
-	propagationSyncLimit, _ := asInt(data[4])
+	propagationSyncLimit := data[4]
 	costs, _ := data[5].([]any)
 	metadata, _ := data[6].(map[any]any)
 	if len(costs) < 3 {
@@ -114,9 +114,9 @@ func (h *PropagationAnnounceHandler) handleAnnounce(destinationHash []byte, anno
 	propagationStampCostFlexibility, _ := asInt(costs[1])
 	peeringCost, _ := asInt(costs[2])
 
-	if h.Router.IsStaticPeer(destinationHash) {
-		staticPeer := h.Router.PeerByHash(destinationHash)
-		if staticPeer != nil && (!isPathResponse || staticPeer.LastHeard == 0) {
+	if h.Router.StaticPeer(destinationHash) {
+		staticPeer := h.Router.Peers[string(destinationHash)]
+		if !isPathResponse || staticPeer.LastHeard == 0 {
 			h.Router.Peer(destinationHash, nodeTimebase, propagationTransferLimit, propagationSyncLimit, propagationStampCost, propagationStampCostFlexibility, peeringCost, metadata)
 		}
 		return
@@ -124,9 +124,9 @@ func (h *PropagationAnnounceHandler) handleAnnounce(destinationHash []byte, anno
 
 	if h.Router.AutoPeer && !isPathResponse {
 		if propagationEnabled {
-			if rns.TransportHopsTo(destinationHash) <= h.Router.AutoPeerMaxDepth {
+			if rns.HopsTo(destinationHash) <= h.Router.AutoPeerMaxDepth {
 				h.Router.Peer(destinationHash, nodeTimebase, propagationTransferLimit, propagationSyncLimit, propagationStampCost, propagationStampCostFlexibility, peeringCost, metadata)
-			} else if h.Router.HasPeer(destinationHash) {
+			} else if _, ok := h.Router.Peers[string(destinationHash)]; ok {
 				rns.Log("Peer moved outside auto-peering range, breaking peering...", rns.LOG_INFO)
 				h.Router.Unpeer(destinationHash, nodeTimebase)
 			}

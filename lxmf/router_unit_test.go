@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/svanichkin/go-reticulum/rns"
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
@@ -13,13 +12,13 @@ import (
 
 func TestRouterMessageStorageSize(t *testing.T) {
 	router := &LXMRouter{
-		PropagationNode:   true,
+		PropagationNode:    true,
 		PropagationEntries: map[string]*propagationEntry{},
 	}
 	router.PropagationEntries["a"] = &propagationEntry{Size: 10}
 	router.PropagationEntries["b"] = &propagationEntry{Size: 5}
-	if size := router.MessageStorageSize(); size != 15 {
-		t.Fatalf("expected size 15, got %d", size)
+	if size := router.MessageStorageSize(); size == nil || *size != 15 {
+		t.Fatalf("expected size 15, got %v", size)
 	}
 }
 
@@ -35,8 +34,8 @@ func TestRouterGetWeightAndStampValue(t *testing.T) {
 		Size:            100,
 		StampValue:      7,
 	}
-	if val := router.GetStampValue(id); val != 7 {
-		t.Fatalf("expected stamp value 7, got %d", val)
+	if val := router.GetStampValue(id); val == nil || *val != 7 {
+		t.Fatalf("expected stamp value 7, got %v", val)
 	}
 	if weight := router.GetWeight(id); weight <= 0 {
 		t.Fatalf("expected weight > 0, got %f", weight)
@@ -45,8 +44,8 @@ func TestRouterGetWeightAndStampValue(t *testing.T) {
 
 func TestRouterAcknowledgeSyncCompletion(t *testing.T) {
 	router := &LXMRouter{
-		PropagationTransferState:    PRComplete,
-		PropagationTransferProgress: 0.5,
+		PropagationTransferState:         PRComplete,
+		PropagationTransferProgress:      0.5,
 		WantsDownloadOnPathAvailableFrom: []byte("from"),
 	}
 	router.AcknowledgeSyncCompletion(true, nil)
@@ -63,10 +62,10 @@ func TestRouterAcknowledgeSyncCompletion(t *testing.T) {
 
 func TestRouterCleanThrottledPeers(t *testing.T) {
 	router := &LXMRouter{
-		ThrottledPeers: map[string]int64{},
+		ThrottledPeers: map[string]float64{},
 	}
-	router.ThrottledPeers["a"] = time.Now().Unix() - 10
-	router.ThrottledPeers["b"] = time.Now().Unix() + 10
+	router.ThrottledPeers["a"] = nowSeconds() - 10
+	router.ThrottledPeers["b"] = nowSeconds() + 10
 	router.CleanThrottledPeers()
 	if _, ok := router.ThrottledPeers["a"]; ok {
 		t.Fatalf("expected expired throttle to be removed")
@@ -121,7 +120,7 @@ func TestRouterTryAutopeerFromSyncRequiresPropagationEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new destination: %v", err)
 	}
-	remoteHash := remoteDest.Hash()
+	remoteHash := remoteDest.Hash
 
 	appData, err := umsgpack.Packb([]any{
 		false,
@@ -136,8 +135,19 @@ func TestRouterTryAutopeerFromSyncRequiresPropagationEnabled(t *testing.T) {
 		t.Fatalf("pack app data: %v", err)
 	}
 
-	if err := rns.IdentityRemember([]byte("packet"), remoteHash, remoteIdentity.GetPublicKey(), appData); err != nil {
-		t.Fatalf("remember identity: %v", err)
+	rns.IdentityRemember([]byte("packet"), remoteHash, remoteIdentity.GetPublicKey(), appData)
+
+	tmpDir := t.TempDir()
+	dataPath := filepath.Join(tmpDir, "propagation.msg")
+	payload, err := umsgpack.Packb([]any{
+		float64(12345),
+		[][]byte{[]byte("x")},
+	})
+	if err != nil {
+		t.Fatalf("pack propagation payload: %v", err)
+	}
+	if err := os.WriteFile(dataPath, payload, 0o600); err != nil {
+		t.Fatalf("write propagation payload: %v", err)
 	}
 
 	router := &LXMRouter{
@@ -149,9 +159,14 @@ func TestRouterTryAutopeerFromSyncRequiresPropagationEnabled(t *testing.T) {
 		DefaultSyncStrategy: PeerDefaultSyncStrategy,
 	}
 
-	if ok := router.tryAutopeerFromSync(remoteHash, "remote"); ok {
-		t.Fatalf("expected auto-peering to be skipped when remote propagation is disabled")
-	}
+	router.PropagationResourceConcluded(&rns.Resource{
+		Status:   rns.ResourceComplete,
+		DataFile: dataPath,
+		Link: &rns.Link{
+			RemoteIdentity: remoteIdentity,
+			LinkID:         []byte("link"),
+		},
+	})
 	if router.Peers[string(remoteHash)] != nil {
 		t.Fatalf("expected no peer to be added when remote propagation is disabled")
 	}

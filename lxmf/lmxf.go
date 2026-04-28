@@ -87,66 +87,51 @@ func DisplayNameFromAppData(appData []byte) string {
 	}
 
 	if appData[0] >= 0x90 && appData[0] <= 0x9f || appData[0] == 0xdc {
-		var peerData []any
+		var peerData any
 		if err := umsgpack.Unpackb(appData, &peerData); err != nil {
+			panic(err)
+		}
+		list, ok := peerData.([]any)
+		if !ok || len(list) < 1 || list[0] == nil {
 			return ""
 		}
-		if len(peerData) < 1 || peerData[0] == nil {
-			return ""
-		}
-		switch name := peerData[0].(type) {
+		switch name := list[0].(type) {
 		case []byte:
 			if !utf8.Valid(name) {
+				rns.Log("Could not decode display name in included announce data. The contained exception was: invalid UTF-8", rns.LOG_ERROR)
 				return ""
 			}
 			return string(name)
-		case string:
-			return name
 		default:
+			rns.Log("Could not decode display name in included announce data. The contained exception was: invalid type", rns.LOG_ERROR)
 			return ""
 		}
 	}
 
 	if !utf8.Valid(appData) {
-		return ""
+		panic("invalid UTF-8")
 	}
 	return string(appData)
 }
 
-func StampCostFromAppData(appData []byte) (int, bool) {
+func StampCostFromAppData(appData []byte) any {
 	if len(appData) == 0 {
-		return 0, false
+		return nil
 	}
 
 	if appData[0] >= 0x90 && appData[0] <= 0x9f || appData[0] == 0xdc {
-		var peerData []any
+		var peerData any
 		if err := umsgpack.Unpackb(appData, &peerData); err != nil {
-			return 0, false
+			return nil
 		}
-		if len(peerData) < 2 {
-			return 0, false
+		list, ok := peerData.([]any)
+		if !ok || len(list) < 2 {
+			return nil
 		}
-		switch v := peerData[1].(type) {
-		case int:
-			return v, true
-		case int64:
-			return int(v), true
-		case int32:
-			return int(v), true
-		case uint:
-			return int(v), true
-		case uint64:
-			return int(v), true
-		case uint32:
-			return int(v), true
-		case float64:
-			return int(v), true
-		default:
-			return 0, false
-		}
+		return list[1]
 	}
 
-	return 0, false
+	return nil
 }
 
 func PNNameFromAppData(appData []byte) string {
@@ -165,63 +150,60 @@ func PNNameFromAppData(appData []byte) string {
 	if !ok {
 		return ""
 	}
-	var name any
 	for key, value := range meta {
-		if keyInt, ok := asInt(key); ok && keyInt == PNMetaName {
-			name = value
-			break
+		match := false
+		switch k := key.(type) {
+		case int:
+			match = k == PNMetaName
+		case int8:
+			match = int(k) == PNMetaName
+		case int16:
+			match = int(k) == PNMetaName
+		case int32:
+			match = int(k) == PNMetaName
+		case int64:
+			match = int(k) == PNMetaName
+		case uint:
+			match = int(k) == PNMetaName
+		case uint8:
+			match = int(k) == PNMetaName
+		case uint16:
+			match = int(k) == PNMetaName
+		case uint32:
+			match = int(k) == PNMetaName
+		case uint64:
+			match = int(k) == PNMetaName
+		}
+		if !match {
+			continue
+		}
+		if v, ok := value.([]byte); ok {
+			if !utf8.Valid(v) {
+				return ""
+			}
+			return string(v)
 		}
 	}
-	if name == nil {
-		return ""
-	}
-	switch v := name.(type) {
-	case []byte:
-		if !utf8.Valid(v) {
-			return ""
-		}
-		return string(v)
-	case string:
-		return v
-	default:
-		return ""
-	}
+	return ""
 }
 
-func PNStampCostFromAppData(appData []byte) (int, bool) {
+func PNStampCostFromAppData(appData []byte) any {
 	if len(appData) == 0 {
-		return 0, false
+		return nil
 	}
 	if !PNAnnounceDataIsValid(appData) {
-		return 0, false
+		return nil
 	}
 
 	var data []any
 	if err := umsgpack.Unpackb(appData, &data); err != nil || len(data) < 6 {
-		return 0, false
+		return nil
 	}
 	costs, ok := data[5].([]any)
 	if !ok || len(costs) < 1 {
-		return 0, false
+		return nil
 	}
-	switch v := costs[0].(type) {
-	case int:
-		return v, true
-	case int64:
-		return int(v), true
-	case int32:
-		return int(v), true
-	case uint:
-		return int(v), true
-	case uint64:
-		return int(v), true
-	case uint32:
-		return int(v), true
-	case float64:
-		return int(v), true
-	default:
-		return 0, false
-	}
+	return costs[0]
 }
 
 func PNAnnounceDataIsValid(data []byte) bool {
@@ -239,19 +221,157 @@ func PNAnnounceDataIsValid(data []byte) bool {
 		return false
 	}
 
-	if _, ok := asInt(decoded[1]); !ok {
+	if _, ok := func() (int, bool) {
+		switch t := decoded[1].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}(); !ok {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Could not decode timebase", rns.LOG_DEBUG)
 		return false
 	}
-	if _, ok := decoded[2].(bool); !ok {
+	statusValid := false
+	switch v := decoded[2].(type) {
+	case bool:
+		statusValid = true
+	case int:
+		statusValid = v == 0 || v == 1
+	case int8:
+		statusValid = v == 0 || v == 1
+	case int16:
+		statusValid = v == 0 || v == 1
+	case int32:
+		statusValid = v == 0 || v == 1
+	case int64:
+		statusValid = v == 0 || v == 1
+	case uint:
+		statusValid = v == 0 || v == 1
+	case uint8:
+		statusValid = v == 0 || v == 1
+	case uint16:
+		statusValid = v == 0 || v == 1
+	case uint32:
+		statusValid = v == 0 || v == 1
+	case uint64:
+		statusValid = v == 0 || v == 1
+	case float64:
+		statusValid = v == 0 || v == 1
+	}
+	if !statusValid {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Indeterminate propagation node status", rns.LOG_DEBUG)
 		return false
 	}
-	if _, ok := asInt(decoded[3]); !ok {
+	if _, ok := func() (int, bool) {
+		switch t := decoded[3].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}(); !ok {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Could not decode propagation transfer limit", rns.LOG_DEBUG)
 		return false
 	}
-	if _, ok := asInt(decoded[4]); !ok {
+	if _, ok := func() (int, bool) {
+		switch t := decoded[4].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}(); !ok {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Could not decode propagation sync limit", rns.LOG_DEBUG)
 		return false
 	}
@@ -264,15 +384,126 @@ func PNAnnounceDataIsValid(data []byte) bool {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Could not decode stamp costs", rns.LOG_DEBUG)
 		return false
 	}
-	if _, ok := asInt(costs[0]); !ok {
+	if _, ok := func() (int, bool) {
+		switch t := costs[0].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}(); !ok {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Could not decode target stamp cost", rns.LOG_DEBUG)
 		return false
 	}
-	if _, ok := asInt(costs[1]); !ok {
+	if _, ok := func() (int, bool) {
+		switch t := costs[1].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}(); !ok {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Could not decode stamp cost flexibility", rns.LOG_DEBUG)
 		return false
 	}
-	if _, ok := asInt(costs[2]); !ok {
+	if _, ok := func() (int, bool) {
+		switch t := costs[2].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}(); !ok {
 		rns.Log("Could not validate propagation node announce data: Invalid announce data: Could not decode peering cost", rns.LOG_DEBUG)
 		return false
 	}
@@ -282,43 +513,4 @@ func PNAnnounceDataIsValid(data []byte) bool {
 	}
 
 	return true
-}
-
-func asInt(v any) (int, bool) {
-	switch t := v.(type) {
-	case int:
-		return t, true
-	case *int:
-		if t == nil {
-			return 0, false
-		}
-		return *t, true
-	case int8:
-		return int(t), true
-	case int16:
-		return int(t), true
-	case int32:
-		return int(t), true
-	case int64:
-		return int(t), true
-	case uint:
-		return int(t), true
-	case uint8:
-		return int(t), true
-	case uint16:
-		return int(t), true
-	case uint32:
-		return int(t), true
-	case uint64:
-		return int(t), true
-	case float64:
-		return int(t), true
-	case bool:
-		if t {
-			return 1, true
-		}
-		return 0, true
-	default:
-		return 0, false
-	}
 }

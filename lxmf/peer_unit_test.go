@@ -20,10 +20,24 @@ func TestPeerQueueProcessing(t *testing.T) {
 	peer.QueueHandledMessage(transientID)
 	peer.ProcessQueues()
 
-	if !containsString(entry.HandledPeers, string(peer.DestinationHash)) {
+	foundHandled := false
+	for _, value := range entry.HandledPeers {
+		if value == string(peer.DestinationHash) {
+			foundHandled = true
+			break
+		}
+	}
+	if !foundHandled {
 		t.Fatalf("expected handled peer entry to be added")
 	}
-	if containsString(entry.UnhandledPeers, string(peer.DestinationHash)) {
+	foundUnhandled := false
+	for _, value := range entry.UnhandledPeers {
+		if value == string(peer.DestinationHash) {
+			foundUnhandled = true
+			break
+		}
+	}
+	if foundUnhandled {
 		t.Fatalf("expected unhandled peer entry to be removed")
 	}
 }
@@ -45,7 +59,7 @@ func TestPeerAcceptanceRateAndCounts(t *testing.T) {
 	peer.Offered = 10
 	peer.Outgoing = 5
 
-	if count := peer.UnhandledMessageCount(); count != 1 {
+	if count := len(peer.UnhandledMessages()); count != 1 {
 		t.Fatalf("expected 1 unhandled message, got %d", count)
 	}
 	if rate := peer.AcceptanceRate(); rate != 0.5 {
@@ -60,7 +74,7 @@ func TestPeerStampCostsKnownAllowsZeroFlexibility(t *testing.T) {
 		PropagationStampCostFlexibility: 0,
 	}
 
-	if !peer.stampCostsKnown() {
+	if !(peer.PeeringCost > 0 && peer.PropagationStampCost >= 0 && peer.PropagationStampCostFlexibility >= 0) {
 		t.Fatalf("expected zero stamp-cost flexibility to still count as known costs")
 	}
 }
@@ -72,7 +86,7 @@ func TestPeerStampCostsKnownRequiresPeeringCost(t *testing.T) {
 		PropagationStampCostFlexibility: 3,
 	}
 
-	if peer.stampCostsKnown() {
+	if peer.PeeringCost > 0 && peer.PropagationStampCost >= 0 && peer.PropagationStampCostFlexibility >= 0 {
 		t.Fatalf("expected missing peering cost to block sync prerequisites")
 	}
 }

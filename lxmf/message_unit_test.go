@@ -79,21 +79,6 @@ func TestPackedContainer(t *testing.T) {
 	}
 }
 
-func TestAsQRWithoutGenerator(t *testing.T) {
-	dest := newTestDest(t, "delivery")
-	src := newTestDest(t, "delivery")
-	msg, err := NewLXMessage(dest, src, "hi", "t", nil, MethodPaper, nil, nil, nil, false)
-	if err != nil {
-		t.Fatalf("new message: %v", err)
-	}
-	if err := msg.Pack(false); err != nil {
-		t.Fatalf("pack: %v", err)
-	}
-	if _, err := msg.AsQR(); err == nil {
-		t.Fatalf("expected AsQR to fail without generator")
-	}
-}
-
 func TestPackRequiresDestinationObjectForEncryptedMethods(t *testing.T) {
 	src := newTestDest(t, "delivery")
 	methods := []byte{MethodOpportunistic, MethodPropagated, MethodPaper}

@@ -1,6 +1,7 @@
 package lxmf
 
 import (
+	"bytes"
 	"time"
 
 	"github.com/svanichkin/go-reticulum/rns"
@@ -33,7 +34,7 @@ func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, annou
 	if h.Router == nil {
 		return
 	}
-	if stampCost, ok := StampCostFromAppData(appData); ok {
+	if stampCost := StampCostFromAppData(appData); stampCost != nil {
 		h.Router.UpdateStampCost(destinationHash, stampCost)
 	}
 
@@ -41,9 +42,9 @@ func (h *DeliveryAnnounceHandler) ReceivedAnnounce(destinationHash []byte, annou
 		if msg == nil {
 			continue
 		}
-		if bytesEqual(destinationHash, msg.DestinationHash) {
+		if bytes.Equal(destinationHash, msg.DestinationHash) {
 			if msg.Method == MethodDirect || msg.Method == MethodOpportunistic {
-				msg.NextDeliveryAttempt = nowSeconds()
+				msg.NextDeliveryAttempt = float64(time.Now().UnixNano()) / 1e9
 				go func() {
 					for h.Router.outboundProcessingLockLocked() {
 						time.Sleep(100 * time.Millisecond)
@@ -78,14 +79,10 @@ func (h *PropagationAnnounceHandler) ReceivePathResponses() bool {
 }
 
 func (h *PropagationAnnounceHandler) ReceivedAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte) {
-	h.handleAnnounce(destinationHash, announcedIdentity, appData, false)
+	h.ReceivedAnnounceWithPacketInfo(destinationHash, announcedIdentity, appData, nil, false)
 }
 
 func (h *PropagationAnnounceHandler) ReceivedAnnounceWithPacketInfo(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte, _ []byte, isPathResponse bool) {
-	h.handleAnnounce(destinationHash, announcedIdentity, appData, isPathResponse)
-}
-
-func (h *PropagationAnnounceHandler) handleAnnounce(destinationHash []byte, announcedIdentity *rns.Identity, appData []byte, isPathResponse bool) {
 	if h.Router == nil || !h.Router.PropagationNode || len(appData) == 0 {
 		return
 	}
@@ -101,18 +98,203 @@ func (h *PropagationAnnounceHandler) handleAnnounce(destinationHash []byte, anno
 		return
 	}
 
-	nodeTimebase, _ := asInt(data[1])
+	nodeTimebase, _ := func() (int, bool) {
+		switch t := data[1].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}()
 	propagationEnabled, _ := data[2].(bool)
-	propagationTransferLimit, _ := asInt(data[3])
+	propagationTransferLimit, _ := func() (int, bool) {
+		switch t := data[3].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}()
 	propagationSyncLimit := data[4]
 	costs, _ := data[5].([]any)
 	metadata, _ := data[6].(map[any]any)
 	if len(costs) < 3 {
 		return
 	}
-	propagationStampCost, _ := asInt(costs[0])
-	propagationStampCostFlexibility, _ := asInt(costs[1])
-	peeringCost, _ := asInt(costs[2])
+	propagationStampCost, _ := func() (int, bool) {
+		switch t := costs[0].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}()
+	propagationStampCostFlexibility, _ := func() (int, bool) {
+		switch t := costs[1].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}()
+	peeringCost, _ := func() (int, bool) {
+		switch t := costs[2].(type) {
+		case int:
+			return t, true
+		case *int:
+			if t == nil {
+				return 0, false
+			}
+			return *t, true
+		case int8:
+			return int(t), true
+		case int16:
+			return int(t), true
+		case int32:
+			return int(t), true
+		case int64:
+			return int(t), true
+		case uint:
+			return int(t), true
+		case uint8:
+			return int(t), true
+		case uint16:
+			return int(t), true
+		case uint32:
+			return int(t), true
+		case uint64:
+			return int(t), true
+		case float64:
+			return int(t), true
+		case bool:
+			if t {
+				return 1, true
+			}
+			return 0, true
+		default:
+			return 0, false
+		}
+	}()
 
 	if h.Router.StaticPeer(destinationHash) {
 		staticPeer := h.Router.Peers[string(destinationHash)]
@@ -134,16 +316,4 @@ func (h *PropagationAnnounceHandler) handleAnnounce(destinationHash []byte, anno
 			h.Router.Unpeer(destinationHash, nodeTimebase)
 		}
 	}
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

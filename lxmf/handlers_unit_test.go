@@ -40,7 +40,20 @@ func TestDeliveryAnnounceHandlerUpdatesStampCost(t *testing.T) {
 	if len(entry) < 2 {
 		t.Fatalf("expected outbound stamp cost list, got %#v", entry)
 	}
-	if int(floatFromAny(entry[1])) != 12 {
+	if int(func() float64 {
+		switch t := entry[1].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}()) != 12 {
 		t.Fatalf("expected cost 12, got %#v", entry[1])
 	}
 }
@@ -164,7 +177,7 @@ func TestPropagationAnnounceHandlerStaticPeerIgnoresPathResponseAfterFirstContac
 	destHash := []byte("static-peer-1234")
 	router.Peers[string(destHash)] = &LXMPeer{
 		Router:               router,
-		DestinationHash:      copyBytes(destHash),
+		DestinationHash:      append([]byte(nil), destHash...),
 		LastHeard:            10,
 		PeeringTimebase:      1,
 		PropagationSyncLimit: 111,

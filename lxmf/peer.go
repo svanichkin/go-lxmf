@@ -1,6 +1,7 @@
 package lxmf
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -117,7 +118,7 @@ func NewLXMPeer(router *LXMRouter, destinationHash []byte, syncStrategy int) *LX
 		umCount:                         0,
 		hmCountsSynced:                  false,
 		umCountsSynced:                  false,
-		DestinationHash:                 copyBytes(destinationHash),
+		DestinationHash:                 append([]byte(nil), destinationHash...),
 		State:                           PeerIdle,
 	}
 
@@ -130,125 +131,6 @@ func NewLXMPeer(router *LXMRouter, destinationHash []byte, syncStrategy int) *LX
 	}
 
 	return peer
-}
-
-func LXMPeerFromBytes(peerBytes []byte, router *LXMRouter) (*LXMPeer, error) {
-	if len(peerBytes) == 0 {
-		return nil, errors.New("empty peer data")
-	}
-	var dict map[any]any
-	if err := umsgpack.Unpackb(peerBytes, &dict); err != nil {
-		return nil, err
-	}
-	rawHash := toBytes(dict["destination_hash"])
-	if len(rawHash) == 0 {
-		return nil, errors.New("missing destination hash")
-	}
-	peer := NewLXMPeer(router, rawHash, PeerDefaultSyncStrategy)
-
-	peer.PeeringTimebase = floatFromAny(dict["peering_timebase"])
-	peer.Alive = boolFromAny(dict["alive"])
-	peer.LastHeard = floatFromAny(dict["last_heard"])
-	peer.LinkEstablishmentRate = floatFromAny(dict["link_establishment_rate"])
-	peer.SyncTransferRate = floatFromAny(dict["sync_transfer_rate"])
-	if v, ok := dict["propagation_transfer_limit"]; ok {
-		peer.PropagationTransferLimit = floatFromAny(v)
-	}
-	if v, ok := dict["propagation_sync_limit"]; ok {
-		peer.PropagationSyncLimit = floatFromAny(v)
-	} else {
-		peer.PropagationSyncLimit = peer.PropagationTransferLimit
-	}
-	if v, ok := dict["propagation_stamp_cost"]; ok {
-		peer.PropagationStampCost = int(floatFromAny(v))
-	}
-	if v, ok := dict["propagation_stamp_cost_flexibility"]; ok {
-		peer.PropagationStampCostFlexibility = int(floatFromAny(v))
-	}
-	if v, ok := dict["peering_cost"]; ok {
-		peer.PeeringCost = int(floatFromAny(v))
-	}
-	if v, ok := dict["sync_strategy"]; ok {
-		peer.SyncStrategy = int(floatFromAny(v))
-	}
-	if v, ok := dict["offered"]; ok {
-		peer.Offered = int(floatFromAny(v))
-	}
-	if v, ok := dict["outgoing"]; ok {
-		peer.Outgoing = int(floatFromAny(v))
-	}
-	if v, ok := dict["incoming"]; ok {
-		peer.Incoming = int(floatFromAny(v))
-	}
-	if v, ok := dict["rx_bytes"]; ok {
-		peer.RxBytes = int(floatFromAny(v))
-	}
-	if v, ok := dict["tx_bytes"]; ok {
-		peer.TxBytes = int(floatFromAny(v))
-	}
-	if v, ok := dict["last_sync_attempt"]; ok {
-		peer.LastSyncAttempt = floatFromAny(v)
-	}
-	if v, ok := dict["peering_key"]; ok {
-		if key, ok := v.([]any); ok {
-			peer.PeeringKey = key
-		}
-	}
-	if meta, ok := dict["metadata"].(map[any]any); ok {
-		peer.Metadata = meta
-	}
-
-	hmCount := 0
-	for _, id := range decodeIDList(dict["handled_ids"]) {
-		if router != nil {
-			if _, ok := router.PropagationEntries[string(id)]; ok {
-				peer.AddHandledMessage(id)
-				hmCount++
-			}
-		}
-	}
-
-	umCount := 0
-	for _, id := range decodeIDList(dict["unhandled_ids"]) {
-		if router != nil {
-			if _, ok := router.PropagationEntries[string(id)]; ok {
-				peer.AddUnhandledMessage(id)
-				umCount++
-			}
-		}
-	}
-
-	peer.hmCount = hmCount
-	peer.umCount = umCount
-	peer.hmCountsSynced = true
-	peer.umCountsSynced = true
-
-	return peer, nil
-}
-
-func (p *LXMPeer) UnhandledMessageCount() int {
-	if p == nil {
-		return 0
-	}
-	if !p.umCountsSynced {
-		p.updateCounts()
-	}
-	return p.umCount
-}
-
-func boolFromAny(v any) bool {
-	switch t := v.(type) {
-	case bool:
-		return t
-	case int:
-		return t != 0
-	case int64:
-		return t != 0
-	case float64:
-		return t != 0
-	default:
-		return false
-	}
 }
 
 func (p *LXMPeer) ToBytes() ([]byte, error) {
@@ -287,37 +169,6 @@ func (p *LXMPeer) ToBytes() ([]byte, error) {
 	return peerBytes, nil
 }
 
-func (p *LXMPeer) PeeringKeyReady() bool {
-	if p.PeeringCost <= 0 {
-		return false
-	}
-	if len(p.PeeringKey) == 2 {
-		value, ok := intFromAny(p.PeeringKey[1])
-		if ok && value >= p.PeeringCost {
-			return true
-		}
-		rns.Log(fmt.Sprintf("Peering key value mismatch for %s. Current value is %d, but peer requires %d. Scheduling regeneration...", p, value, p.PeeringCost), rns.LOG_WARNING)
-		p.PeeringKey = nil
-	}
-	return false
-}
-
-func (p *LXMPeer) stampCostsKnown() bool {
-	if p == nil {
-		return false
-	}
-	return p.PeeringCost > 0 && p.PropagationStampCost >= 0 && p.PropagationStampCostFlexibility >= 0
-}
-
-func (p *LXMPeer) PeeringKeyValue() *int {
-	if len(p.PeeringKey) == 2 {
-		if value, ok := intFromAny(p.PeeringKey[1]); ok {
-			return &value
-		}
-	}
-	return nil
-}
-
 func (p *LXMPeer) GeneratePeeringKey() bool {
 	if p.PeeringCost <= 0 {
 		return false
@@ -328,25 +179,25 @@ func (p *LXMPeer) GeneratePeeringKey() bool {
 	if p.PeeringKey != nil {
 		return true
 	}
-	rns.Log(fmt.Sprintf("Generating peering key for %s", p), rns.LOG_NOTICE)
+	rns.Log("Generating peering key for "+rns.PrettyHexRep(p.DestinationHash), rns.LOG_NOTICE)
 	if p.Router == nil || p.Router.Identity == nil {
-		rns.Log(fmt.Sprintf("Could not update peering key for %s since the local LXMF router identity is not configured", p), rns.LOG_ERROR)
+		rns.Log("Could not update peering key for "+rns.PrettyHexRep(p.DestinationHash)+" since the local LXMF router identity is not configured", rns.LOG_ERROR)
 		return false
 	}
 
 	if p.Identity == nil {
 		p.Identity = rns.IdentityRecall(p.DestinationHash)
 		if p.Identity == nil {
-			rns.Log(fmt.Sprintf("Could not update peering key for %s since its identity could not be recalled", p), rns.LOG_ERROR)
+			rns.Log("Could not update peering key for "+rns.PrettyHexRep(p.DestinationHash)+" since its identity could not be recalled", rns.LOG_ERROR)
 			return false
 		}
 	}
 
-	keyMaterial := append(copyBytes(p.Identity.Hash), p.Router.Identity.Hash...)
+	keyMaterial := append(append([]byte(nil), p.Identity.Hash...), p.Router.Identity.Hash...)
 	peeringKey, value := GenerateStamp(keyMaterial, p.PeeringCost, WorkblockExpandRoundsPeering)
 	if value >= p.PeeringCost {
 		p.PeeringKey = []any{peeringKey, value}
-		rns.Log(fmt.Sprintf("Peering key successfully generated for %s", p), rns.LOG_NOTICE)
+		rns.Log("Peering key successfully generated for "+rns.PrettyHexRep(p.DestinationHash), rns.LOG_NOTICE)
 		return true
 	}
 	return false
@@ -357,11 +208,46 @@ func (p *LXMPeer) Sync() {
 		return
 	}
 	rns.Log("Initiating LXMF Propagation Node sync with peer "+rns.PrettyHexRep(p.DestinationHash), rns.LOG_DEBUG)
-	p.LastSyncAttempt = nowSeconds()
+	p.LastSyncAttempt = float64(time.Now().UnixNano()) / 1e9
 
-	syncTimeReached := nowSeconds() > p.NextSyncAttempt
-	stampCostsKnown := p.stampCostsKnown()
-	peeringKeyReady := p.PeeringKeyReady()
+	syncTimeReached := float64(time.Now().UnixNano())/1e9 > p.NextSyncAttempt
+	stampCostsKnown := p.PeeringCost > 0 && p.PropagationStampCost >= 0 && p.PropagationStampCostFlexibility >= 0
+	peeringKeyReady := false
+	if p.PeeringCost > 0 && len(p.PeeringKey) == 2 {
+		value := 0
+		switch v := p.PeeringKey[1].(type) {
+		case int:
+			value = v
+		case int8:
+			value = int(v)
+		case int16:
+			value = int(v)
+		case int32:
+			value = int(v)
+		case int64:
+			value = int(v)
+		case uint:
+			value = int(v)
+		case uint8:
+			value = int(v)
+		case uint16:
+			value = int(v)
+		case uint32:
+			value = int(v)
+		case uint64:
+			value = int(v)
+		case float32:
+			value = int(v)
+		case float64:
+			value = int(v)
+		}
+		if value >= p.PeeringCost {
+			peeringKeyReady = true
+		} else {
+			rns.Log("Peering key value mismatch for "+rns.PrettyHexRep(p.DestinationHash)+". Current value is "+fmt.Sprintf("%d", value)+", but peer requires "+fmt.Sprintf("%d", p.PeeringCost)+". Scheduling regeneration...", rns.LOG_WARNING)
+			p.PeeringKey = nil
+		}
+	}
 	syncChecks := syncTimeReached && stampCostsKnown && peeringKeyReady
 
 	if !syncChecks {
@@ -369,7 +255,7 @@ func (p *LXMPeer) Sync() {
 			if p.LastSyncAttempt > p.LastHeard {
 				p.Alive = false
 			}
-			delay := p.NextSyncAttempt - nowSeconds()
+			delay := p.NextSyncAttempt - float64(time.Now().UnixNano())/1e9
 			postponeDelay := ""
 			if delay > 0 {
 				postponeDelay = " for " + rns.PrettyTime(delay, false, false)
@@ -412,19 +298,19 @@ func (p *LXMPeer) Sync() {
 
 	unhandled := p.UnhandledMessages()
 	if len(unhandled) == 0 {
-		rns.Log(fmt.Sprintf("Sync requested for %s, but no unhandled messages exist for peer. Sync complete.", p), rns.LOG_DEBUG)
+		rns.Log("Sync requested for "+rns.PrettyHexRep(p.DestinationHash)+", but no unhandled messages exist for peer. Sync complete.", rns.LOG_DEBUG)
 		return
 	}
 
 	if p.CurrentlyTransferringMessages != nil {
-		rns.Log(fmt.Sprintf("Sync requested for %s, but current message transfer index was not clear. Aborting.", p), rns.LOG_ERROR)
+		rns.Log("Sync requested for "+rns.PrettyHexRep(p.DestinationHash)+", but current message transfer index was not clear. Aborting.", rns.LOG_ERROR)
 		return
 	}
 
 	if p.State == PeerIdle {
 		rns.Log("Establishing link for sync to peer "+rns.PrettyHexRep(p.DestinationHash)+"...", rns.LOG_DEBUG)
 		p.SyncBackoff += PeerSyncBackoffStep
-		p.NextSyncAttempt = nowSeconds() + p.SyncBackoff
+		p.NextSyncAttempt = float64(time.Now().UnixNano())/1e9 + p.SyncBackoff
 		link, err := rns.NewLink(p.Destination, nil, rns.LinkModeDefault, p.LinkEstablished, p.LinkClosed)
 		if err != nil {
 			rns.Log("Could not establish sync link for "+rns.PrettyHexRep(p.DestinationHash)+": "+err.Error(), rns.LOG_ERROR)
@@ -440,9 +326,12 @@ func (p *LXMPeer) Sync() {
 	}
 
 	p.Alive = true
-	p.LastHeard = nowSeconds()
+	p.LastHeard = float64(time.Now().UnixNano()) / 1e9
 	p.SyncBackoff = 0
-	minAcceptedCost := minInt(0, p.PropagationStampCost-p.PropagationStampCostFlexibility)
+	minAcceptedCost := p.PropagationStampCost - p.PropagationStampCostFlexibility
+	if minAcceptedCost < 0 {
+		minAcceptedCost = 0
+	}
 
 	rns.Log("Synchronisation link to peer "+rns.PrettyHexRep(p.DestinationHash)+" established, preparing sync offer...", rns.LOG_DEBUG)
 	type unhandledEntry struct {
@@ -482,7 +371,7 @@ func (p *LXMPeer) Sync() {
 		p.RemoveUnhandledMessage(transientID)
 	}
 
-	sort.Slice(unhandledEntries, func(i, j int) bool {
+	sort.SliceStable(unhandledEntries, func(i, j int) bool {
 		return unhandledEntries[i].weight < unhandledEntries[j].weight
 	})
 
@@ -514,7 +403,11 @@ func (p *LXMPeer) Sync() {
 
 	offer := []any{p.PeeringKey[0], unhandledIDs}
 
-	rns.Log(fmt.Sprintf("Offering %d messages to peer %s (%s)", len(unhandledIDs), rns.PrettyHexRep(p.Destination.Hash), rns.PrettySize(float64(lenMustPack(unhandledIDs)))), rns.LOG_VERBOSE)
+	packedOffer, err := umsgpack.Packb(unhandledIDs)
+	if err != nil {
+		packedOffer = nil
+	}
+	rns.Log(fmt.Sprintf("Offering %d messages to peer %s (%s)", len(unhandledIDs), rns.PrettyHexRep(p.Destination.Hash), rns.PrettySize(float64(len(packedOffer)))), rns.LOG_VERBOSE)
 	p.LastOffer = copyIDList(unhandledIDs)
 	if p.Link != nil {
 		p.Link.Request(OfferRequestPath, offer, p.OfferResponse, p.RequestFailed, nil, 0)
@@ -548,7 +441,47 @@ func (p *LXMPeer) OfferResponse(receipt *rns.RequestReceipt) {
 	}
 	response := receipt.GetResponse()
 
-	if code, ok := intFromAny(response); ok {
+	code := 0
+	codeSet := false
+	switch v := response.(type) {
+	case int:
+		code = v
+		codeSet = true
+	case int8:
+		code = int(v)
+		codeSet = true
+	case int16:
+		code = int(v)
+		codeSet = true
+	case int32:
+		code = int(v)
+		codeSet = true
+	case int64:
+		code = int(v)
+		codeSet = true
+	case uint:
+		code = int(v)
+		codeSet = true
+	case uint8:
+		code = int(v)
+		codeSet = true
+	case uint16:
+		code = int(v)
+		codeSet = true
+	case uint32:
+		code = int(v)
+		codeSet = true
+	case uint64:
+		code = int(v)
+		codeSet = true
+	case float32:
+		code = int(v)
+		codeSet = true
+	case float64:
+		code = int(v)
+		codeSet = true
+	}
+	if codeSet {
 		switch code {
 		case PeerErrorNoIdentity:
 			if p.Link != nil {
@@ -569,7 +502,7 @@ func (p *LXMPeer) OfferResponse(receipt *rns.RequestReceipt) {
 		case PeerErrorThrottled:
 			throttleTime := float64(PNStampThrottle)
 			rns.Log(fmt.Sprintf("Remote indicated that we're throttled, postponing sync for %s", rns.PrettyTime(throttleTime, false, false)), rns.LOG_VERBOSE)
-			p.NextSyncAttempt = nowSeconds() + throttleTime
+			p.NextSyncAttempt = float64(time.Now().UnixNano())/1e9 + throttleTime
 			return
 		}
 	}
@@ -598,7 +531,46 @@ func (p *LXMPeer) OfferResponse(receipt *rns.RequestReceipt) {
 			}
 		}
 	} else {
-		responseIDs := decodeIDList(response)
+		responseIDs := func(v any) [][]byte {
+			if v == nil {
+				return nil
+			}
+			switch ids := v.(type) {
+			case [][]byte:
+				out := make([][]byte, 0, len(ids))
+				for _, id := range ids {
+					if len(id) > 0 {
+						out = append(out, append([]byte(nil), id...))
+					}
+				}
+				return out
+			case []any:
+				out := make([][]byte, 0, len(ids))
+				for _, entry := range ids {
+					switch id := entry.(type) {
+					case []byte:
+						if len(id) > 0 {
+							out = append(out, append([]byte(nil), id...))
+						}
+					case string:
+						if id != "" {
+							out = append(out, []byte(id))
+						}
+					}
+				}
+				return out
+			case []string:
+				out := make([][]byte, 0, len(ids))
+				for _, entry := range ids {
+					if entry != "" {
+						out = append(out, []byte(entry))
+					}
+				}
+				return out
+			default:
+				return nil
+			}
+		}(response)
 		responseSet := make(map[string]bool, len(responseIDs))
 		for _, id := range responseIDs {
 			responseSet[string(id)] = true
@@ -636,7 +608,7 @@ func (p *LXMPeer) OfferResponse(receipt *rns.RequestReceipt) {
 			lxmList = append(lxmList, data)
 		}
 
-		data, err := umsgpack.Packb([]any{nowSeconds(), lxmList})
+		data, err := umsgpack.Packb([]any{float64(time.Now().UnixNano()) / 1e9, lxmList})
 		if err != nil {
 			rns.Log("Could not pack sync data for peer "+rns.PrettyHexRep(p.DestinationHash)+": "+err.Error(), rns.LOG_ERROR)
 			if p.Link != nil {
@@ -675,7 +647,7 @@ func (p *LXMPeer) OfferResponse(receipt *rns.RequestReceipt) {
 		}
 
 		p.CurrentlyTransferringMessages = copyIDList(wantedMessageIDs)
-		p.CurrentSyncTransferStarted = nowSeconds()
+		p.CurrentSyncTransferStarted = float64(time.Now().UnixNano()) / 1e9
 		p.State = PeerResourceTransferring
 		return
 	}
@@ -695,7 +667,7 @@ func (p *LXMPeer) ResourceConcluded(resource *rns.Resource) {
 	}
 	if resource.Status == rns.ResourceComplete {
 		if p.CurrentlyTransferringMessages == nil {
-			rns.Log(fmt.Sprintf("Sync transfer completed on %s, but transferred message index was unavailable. Aborting.", p), rns.LOG_ERROR)
+			rns.Log("Sync transfer completed on "+rns.PrettyHexRep(p.DestinationHash)+", but transferred message index was unavailable. Aborting.", rns.LOG_ERROR)
 			if p.Link != nil {
 				p.Link.Teardown()
 			}
@@ -717,7 +689,7 @@ func (p *LXMPeer) ResourceConcluded(resource *rns.Resource) {
 
 		rateStr := ""
 		if p.CurrentSyncTransferStarted > 0 {
-			duration := nowSeconds() - p.CurrentSyncTransferStarted
+			duration := float64(time.Now().UnixNano())/1e9 - p.CurrentSyncTransferStarted
 			if duration > 0 {
 				p.SyncTransferRate = float64(resource.GetTransferSize()*8) / duration
 				rateStr = " at " + rns.PrettySpeed(p.SyncTransferRate)
@@ -726,7 +698,7 @@ func (p *LXMPeer) ResourceConcluded(resource *rns.Resource) {
 
 		rns.Log(fmt.Sprintf("Syncing %d messages to peer %s completed%s", len(p.CurrentlyTransferringMessages), rns.PrettyHexRep(p.DestinationHash), rateStr), rns.LOG_VERBOSE)
 		p.Alive = true
-		p.LastHeard = nowSeconds()
+		p.LastHeard = float64(time.Now().UnixNano()) / 1e9
 		p.Offered += len(p.LastOffer)
 		p.Outgoing += len(p.CurrentlyTransferringMessages)
 		p.TxBytes += resource.GetDataSize()
@@ -735,7 +707,7 @@ func (p *LXMPeer) ResourceConcluded(resource *rns.Resource) {
 		p.CurrentSyncTransferStarted = 0
 
 		if p.SyncStrategy == PeerStrategyPersistent {
-			if p.UnhandledMessageCount() > 0 {
+			if len(p.UnhandledMessages()) > 0 {
 				p.Sync()
 			}
 		}
@@ -775,17 +747,11 @@ func (p *LXMPeer) QueuedItems() bool {
 }
 
 func (p *LXMPeer) QueueUnhandledMessage(transientID []byte) {
-	if len(transientID) == 0 {
-		return
-	}
-	p.UnhandledMessagesQueue = append(p.UnhandledMessagesQueue, copyBytes(transientID))
+	p.UnhandledMessagesQueue = append(p.UnhandledMessagesQueue, append([]byte(nil), transientID...))
 }
 
 func (p *LXMPeer) QueueHandledMessage(transientID []byte) {
-	if len(transientID) == 0 {
-		return
-	}
-	p.HandledMessagesQueue = append(p.HandledMessagesQueue, copyBytes(transientID))
+	p.HandledMessagesQueue = append(p.HandledMessagesQueue, append([]byte(nil), transientID...))
 }
 
 func (p *LXMPeer) ProcessQueues() {
@@ -800,10 +766,24 @@ func (p *LXMPeer) ProcessQueues() {
 		transientID := p.HandledMessagesQueue[idx]
 		p.HandledMessagesQueue = p.HandledMessagesQueue[:idx]
 
-		if !containsBytes(handledMessages, transientID) {
+		if !func() bool {
+			for _, entry := range handledMessages {
+				if bytes.Equal(entry, transientID) {
+					return true
+				}
+			}
+			return false
+		}() {
 			p.AddHandledMessage(transientID)
 		}
-		if containsBytes(unhandledMessages, transientID) {
+		if func() bool {
+			for _, entry := range unhandledMessages {
+				if bytes.Equal(entry, transientID) {
+					return true
+				}
+			}
+			return false
+		}() {
 			p.RemoveUnhandledMessage(transientID)
 		}
 	}
@@ -813,7 +793,21 @@ func (p *LXMPeer) ProcessQueues() {
 		transientID := p.UnhandledMessagesQueue[idx]
 		p.UnhandledMessagesQueue = p.UnhandledMessagesQueue[:idx]
 
-		if !containsBytes(handledMessages, transientID) && !containsBytes(unhandledMessages, transientID) {
+		if !func() bool {
+			for _, entry := range handledMessages {
+				if bytes.Equal(entry, transientID) {
+					return true
+				}
+			}
+			return false
+		}() && !func() bool {
+			for _, entry := range unhandledMessages {
+				if bytes.Equal(entry, transientID) {
+					return true
+				}
+			}
+			return false
+		}() {
 			p.AddUnhandledMessage(transientID)
 		}
 	}
@@ -825,12 +819,20 @@ func (p *LXMPeer) HandledMessages() [][]byte {
 	}
 	destKey := string(p.DestinationHash)
 	hm := make([][]byte, 0)
-	for transientID, entry := range p.Router.PropagationEntries {
+	for _, transientKey := range p.Router.PropagationOrder {
+		entry := p.Router.PropagationEntries[transientKey]
 		if entry == nil {
 			continue
 		}
-		if containsString(entry.HandledPeers, destKey) {
-			hm = append(hm, []byte(transientID))
+		found := false
+		for _, peer := range entry.HandledPeers {
+			if peer == destKey {
+				found = true
+				break
+			}
+		}
+		if found {
+			hm = append(hm, []byte(transientKey))
 		}
 	}
 	p.hmCount = len(hm)
@@ -844,27 +846,25 @@ func (p *LXMPeer) UnhandledMessages() [][]byte {
 	}
 	destKey := string(p.DestinationHash)
 	um := make([][]byte, 0)
-	for transientID, entry := range p.Router.PropagationEntries {
+	for _, transientKey := range p.Router.PropagationOrder {
+		entry := p.Router.PropagationEntries[transientKey]
 		if entry == nil {
 			continue
 		}
-		if containsString(entry.UnhandledPeers, destKey) {
-			um = append(um, []byte(transientID))
+		found := false
+		for _, peer := range entry.UnhandledPeers {
+			if peer == destKey {
+				found = true
+				break
+			}
+		}
+		if found {
+			um = append(um, []byte(transientKey))
 		}
 	}
 	p.umCount = len(um)
 	p.umCountsSynced = true
 	return um
-}
-
-func (p *LXMPeer) HandledMessageCount() int {
-	if p == nil {
-		return 0
-	}
-	if !p.hmCountsSynced {
-		p.updateCounts()
-	}
-	return p.hmCount
 }
 
 func (p *LXMPeer) AcceptanceRate() float64 {
@@ -874,22 +874,20 @@ func (p *LXMPeer) AcceptanceRate() float64 {
 	return float64(p.Outgoing) / float64(p.Offered)
 }
 
-func (p *LXMPeer) updateCounts() {
-	if !p.hmCountsSynced {
-		_ = p.HandledMessages()
-	}
-	if !p.umCountsSynced {
-		_ = p.UnhandledMessages()
-	}
-}
-
 func (p *LXMPeer) AddHandledMessage(transientID []byte) {
-	if p == nil || p.Router == nil || len(transientID) == 0 {
+	if p == nil || p.Router == nil {
 		return
 	}
 	if entry, ok := p.Router.PropagationEntries[string(transientID)]; ok && entry != nil {
 		destKey := string(p.DestinationHash)
-		if !containsString(entry.HandledPeers, destKey) {
+		found := false
+		for _, peer := range entry.HandledPeers {
+			if peer == destKey {
+				found = true
+				break
+			}
+		}
+		if !found {
 			entry.HandledPeers = append(entry.HandledPeers, destKey)
 			p.hmCountsSynced = false
 		}
@@ -897,12 +895,19 @@ func (p *LXMPeer) AddHandledMessage(transientID []byte) {
 }
 
 func (p *LXMPeer) AddUnhandledMessage(transientID []byte) {
-	if p == nil || p.Router == nil || len(transientID) == 0 {
+	if p == nil || p.Router == nil {
 		return
 	}
 	if entry, ok := p.Router.PropagationEntries[string(transientID)]; ok && entry != nil {
 		destKey := string(p.DestinationHash)
-		if !containsString(entry.UnhandledPeers, destKey) {
+		found := false
+		for _, peer := range entry.UnhandledPeers {
+			if peer == destKey {
+				found = true
+				break
+			}
+		}
+		if !found {
 			entry.UnhandledPeers = append(entry.UnhandledPeers, destKey)
 			p.umCount++
 		}
@@ -910,93 +915,52 @@ func (p *LXMPeer) AddUnhandledMessage(transientID []byte) {
 }
 
 func (p *LXMPeer) RemoveHandledMessage(transientID []byte) {
-	if p == nil || p.Router == nil || len(transientID) == 0 {
+	if p == nil || p.Router == nil {
 		return
 	}
 	if entry, ok := p.Router.PropagationEntries[string(transientID)]; ok && entry != nil {
 		destKey := string(p.DestinationHash)
-		if containsString(entry.HandledPeers, destKey) {
-			entry.HandledPeers = removeString(entry.HandledPeers, destKey)
+		found := false
+		for _, peer := range entry.HandledPeers {
+			if peer == destKey {
+				found = true
+				break
+			}
+		}
+		if found {
+			for i, peer := range entry.HandledPeers {
+				if peer == destKey {
+					entry.HandledPeers = append(entry.HandledPeers[:i], entry.HandledPeers[i+1:]...)
+					break
+				}
+			}
 			p.hmCountsSynced = false
 		}
 	}
 }
 
 func (p *LXMPeer) RemoveUnhandledMessage(transientID []byte) {
-	if p == nil || p.Router == nil || len(transientID) == 0 {
+	if p == nil || p.Router == nil {
 		return
 	}
 	if entry, ok := p.Router.PropagationEntries[string(transientID)]; ok && entry != nil {
 		destKey := string(p.DestinationHash)
-		if containsString(entry.UnhandledPeers, destKey) {
-			entry.UnhandledPeers = removeString(entry.UnhandledPeers, destKey)
+		found := false
+		for _, peer := range entry.UnhandledPeers {
+			if peer == destKey {
+				found = true
+				break
+			}
+		}
+		if found {
+			for i, peer := range entry.UnhandledPeers {
+				if peer == destKey {
+					entry.UnhandledPeers = append(entry.UnhandledPeers[:i], entry.UnhandledPeers[i+1:]...)
+					break
+				}
+			}
 			p.umCountsSynced = false
 		}
-	}
-}
-
-func (p *LXMPeer) Name() string {
-	if p == nil || p.Metadata == nil {
-		return ""
-	}
-	var name any
-	for key, value := range p.Metadata {
-		if keyInt, ok := intFromAny(key); ok && keyInt == PNMetaName {
-			name = value
-			break
-		}
-	}
-	if name == nil {
-		return ""
-	}
-	if b, ok := name.([]byte); ok {
-		return string(b)
-	}
-	if s, ok := name.(string); ok {
-		return s
-	}
-	return ""
-}
-
-func (p *LXMPeer) String() string {
-	if len(p.DestinationHash) > 0 {
-		return rns.PrettyHexRep(p.DestinationHash)
-	}
-	return "<Unknown>"
-}
-
-func decodeIDList(v any) [][]byte {
-	if v == nil {
-		return nil
-	}
-	switch ids := v.(type) {
-	case [][]byte:
-		out := make([][]byte, 0, len(ids))
-		for _, id := range ids {
-			if len(id) > 0 {
-				out = append(out, copyBytes(id))
-			}
-		}
-		return out
-	case []any:
-		out := make([][]byte, 0, len(ids))
-		for _, entry := range ids {
-			id := toBytes(entry)
-			if len(id) > 0 {
-				out = append(out, id)
-			}
-		}
-		return out
-	case []string:
-		out := make([][]byte, 0, len(ids))
-		for _, entry := range ids {
-			if entry != "" {
-				out = append(out, []byte(entry))
-			}
-		}
-		return out
-	default:
-		return nil
 	}
 }
 
@@ -1006,80 +970,7 @@ func copyIDList(ids [][]byte) [][]byte {
 	}
 	out := make([][]byte, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, copyBytes(id))
+		out = append(out, append([]byte(nil), id...))
 	}
 	return out
-}
-
-func containsBytes(list [][]byte, id []byte) bool {
-	for _, entry := range list {
-		if bytesEqual(entry, id) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsString(list []string, value string) bool {
-	for _, entry := range list {
-		if entry == value {
-			return true
-		}
-	}
-	return false
-}
-
-func removeString(list []string, value string) []string {
-	for i, entry := range list {
-		if entry == value {
-			return append(list[:i], list[i+1:]...)
-		}
-	}
-	return list
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func intFromAny(v any) (int, bool) {
-	switch t := v.(type) {
-	case int:
-		return t, true
-	case int8:
-		return int(t), true
-	case int16:
-		return int(t), true
-	case int32:
-		return int(t), true
-	case int64:
-		return int(t), true
-	case uint:
-		return int(t), true
-	case uint8:
-		return int(t), true
-	case uint16:
-		return int(t), true
-	case uint32:
-		return int(t), true
-	case uint64:
-		return int(t), true
-	case float32:
-		return int(t), true
-	case float64:
-		return int(t), true
-	default:
-		return 0, false
-	}
-}
-
-func lenMustPack(ids [][]byte) int {
-	packed, err := umsgpack.Packb(ids)
-	if err != nil {
-		return 0
-	}
-	return len(packed)
 }

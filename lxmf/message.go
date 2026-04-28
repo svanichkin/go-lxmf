@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -65,11 +66,8 @@ const (
 	EncryptionDescriptionEC          = "Curve25519"
 	EncryptionDescriptionUnencrypted = "Unencrypted"
 
-	URISchema         = "lxm"
-	QRErrorCorrection = "ERROR_CORRECT_L"
-	QRBorder          = 1
-	QRMaxStorage      = 2953
-	PaperMDU          = ((QRMaxStorage - (len(URISchema) + len("://"))) * 6) / 8
+	URISchema = "lxm"
+	PaperMDU  = ((2953 - (len(URISchema) + len("://"))) * 6) / 8
 )
 
 var (
@@ -80,14 +78,6 @@ var (
 	PlainPacketMDU            = rns.PacketPlainMDU
 	PlainPacketMaxContent     = PlainPacketMDU - LXMFOverhead + DestinationLength
 )
-
-type QRGenerator func(data string, errorCorrection string, border int) (any, error)
-
-var qrGenerator QRGenerator
-
-func RegisterQRGenerator(generator QRGenerator) {
-	qrGenerator = generator
-}
 
 type LXMessage struct {
 	destination *rns.Destination
@@ -168,7 +158,7 @@ func NewLXMessage(destination, source *rns.Destination, content, title string, f
 		msg.destination = destination
 		msg.DestinationHash = destination.Hash
 	} else if destinationHash != nil {
-		msg.DestinationHash = copyBytes(destinationHash)
+		msg.DestinationHash = append([]byte(nil), destinationHash...)
 	} else {
 		return nil, errors.New("LXMessage initialised with invalid destination")
 	}
@@ -177,20 +167,16 @@ func NewLXMessage(destination, source *rns.Destination, content, title string, f
 		msg.source = source
 		msg.SourceHash = source.Hash
 	} else if sourceHash != nil {
-		msg.SourceHash = copyBytes(sourceHash)
+		msg.SourceHash = append([]byte(nil), sourceHash...)
 	} else {
 		return nil, errors.New("LXMessage initialised with invalid source")
 	}
 
 	if title != "" {
 		msg.SetTitleFromString(title)
-	} else {
-		msg.SetTitleFromString("")
 	}
 	if content != "" {
 		msg.SetContentFromString(content)
-	} else {
-		msg.SetContentFromString("")
 	}
 
 	msg.SetFields(fields)
@@ -209,7 +195,7 @@ func (m *LXMessage) SetTitleFromString(title string) {
 }
 
 func (m *LXMessage) SetTitleFromBytes(title []byte) {
-	m.Title = copyBytes(title)
+	m.Title = append([]byte(nil), title...)
 }
 
 func (m *LXMessage) TitleAsString() string {
@@ -225,7 +211,7 @@ func (m *LXMessage) SetContentFromString(content string) {
 }
 
 func (m *LXMessage) SetContentFromBytes(content []byte) {
-	m.Content = copyBytes(content)
+	m.Content = append([]byte(nil), content...)
 }
 
 func (m *LXMessage) ContentAsString() string {
@@ -253,9 +239,6 @@ func (m *LXMessage) Source() *rns.Destination {
 }
 
 func (m *LXMessage) SetDestination(destination *rns.Destination) error {
-	if m.destination != nil {
-		return errors.New("cannot reassign destination on LXMessage")
-	}
 	if destination == nil {
 		return errors.New("invalid destination set on LXMessage")
 	}
@@ -265,9 +248,6 @@ func (m *LXMessage) SetDestination(destination *rns.Destination) error {
 }
 
 func (m *LXMessage) SetSource(source *rns.Destination) error {
-	if m.source != nil {
-		return errors.New("cannot reassign source on LXMessage")
-	}
 	if source == nil {
 		return errors.New("invalid source set on LXMessage")
 	}
@@ -289,17 +269,12 @@ func (m *LXMessage) RegisterFailedCallback(cb func(*LXMessage)) {
 }
 
 func (m *LXMessage) ValidateStamp(targetCost int, tickets [][]byte) bool {
-	if tickets != nil {
-		for _, ticket := range tickets {
-			if len(ticket) == 0 {
-				continue
-			}
-			try := rns.TruncatedHash(append(append([]byte{}, ticket...), m.MessageID...))
-			if m.Stamp != nil && bytes.Equal(m.Stamp, try) {
-				tv := CostTicket
-				m.StampValue = &tv
-				return true
-			}
+	for _, ticket := range tickets {
+		try := rns.TruncatedHash(append(append([]byte{}, ticket...), m.MessageID...))
+		if m.Stamp != nil && bytes.Equal(m.Stamp, try) {
+			tv := CostTicket
+			m.StampValue = &tv
+			return true
 		}
 	}
 
@@ -332,12 +307,37 @@ func (m *LXMessage) GetStamp(timeout *time.Duration) []byte {
 		return m.Stamp
 	}
 
-	stampCost, ok := asInt(m.StampCost)
-	if !ok {
+	var stampCost int
+	switch v := m.StampCost.(type) {
+	case int:
+		stampCost = v
+	case int8:
+		stampCost = int(v)
+	case int16:
+		stampCost = int(v)
+	case int32:
+		stampCost = int(v)
+	case int64:
+		stampCost = int(v)
+	case uint:
+		stampCost = int(v)
+	case uint8:
+		stampCost = int(v)
+	case uint16:
+		stampCost = int(v)
+	case uint32:
+		stampCost = int(v)
+	case uint64:
+		stampCost = int(v)
+	case float32:
+		stampCost = int(v)
+	case float64:
+		stampCost = int(v)
+	default:
 		m.StampValue = nil
 		return nil
 	}
-	generated, value := generateStampWithTimeout(m.MessageID, stampCost, WorkblockExpandRounds, timeout)
+	generated, value := GenerateStamp(m.MessageID, stampCost, WorkblockExpandRounds)
 	if generated != nil {
 		m.StampValue = &value
 		m.StampValid = true
@@ -352,14 +352,11 @@ func (m *LXMessage) GetPropagationStamp(targetCost int, timeout *time.Duration) 
 	}
 
 	m.PropagationTargetCost = &targetCost
-	if m.PropagationTargetCost == nil {
-		panic("Cannot generate propagation stamp without configured target propagation cost")
-	}
 
 	if len(m.TransientID) == 0 {
 		_ = m.Pack(false)
 	}
-	generated, value := generateStampWithTimeout(m.TransientID, targetCost, WorkblockExpandRoundsPN, timeout)
+	generated, value := GenerateStamp(m.TransientID, targetCost, WorkblockExpandRoundsPN)
 	if generated != nil {
 		m.PropagationStamp = generated
 		m.PropagationStampValue = &value
@@ -374,7 +371,7 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 		return fmt.Errorf("attempt to re-pack LXMessage %s that was already packed", m.String())
 	}
 	if m.Timestamp == 0 {
-		m.Timestamp = nowSeconds()
+		m.Timestamp = float64(time.Now().UnixNano()) / 1e9
 	}
 
 	m.PropagationPacked = nil
@@ -391,7 +388,7 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 	}
 	hashedPart = append(hashedPart, packedPayload...)
 	m.Hash = rns.FullHash(hashedPart)
-	m.MessageID = copyBytes(m.Hash)
+	m.MessageID = append([]byte(nil), m.Hash...)
 
 	if !m.DeferStamp {
 		m.Stamp = m.GetStamp(nil)
@@ -468,14 +465,16 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 		singlePacketContentLimit := LinkPacketMaxContent
 		if m.PNEncryptedData == nil || payloadUpdated {
 			m.PNEncryptedData = m.destination.Encrypt(m.Packed[DestinationLength:])
-			m.setRatchetFromDestination()
+			if ratchetID := rns.IdentityCurrentRatchetID(m.DestinationHash); len(ratchetID) > 0 {
+				m.RatchetID = append([]byte(nil), ratchetID...)
+			}
 		}
 		lxmfData := append(append([]byte{}, m.Packed[:DestinationLength]...), m.PNEncryptedData...)
 		m.TransientID = rns.FullHash(lxmfData)
 		if m.PropagationStamp != nil {
 			lxmfData = append(lxmfData, m.PropagationStamp...)
 		}
-		packed, err := umsgpack.Packb([]any{nowSeconds(), []any{lxmfData}})
+		packed, err := umsgpack.Packb([]any{float64(time.Now().UnixNano()) / 1e9, []any{lxmfData}})
 		if err != nil {
 			return err
 		}
@@ -491,7 +490,9 @@ func (m *LXMessage) Pack(payloadUpdated bool) error {
 	case MethodPaper:
 		paperContentLimit := PaperMDU
 		encrypted := m.destination.Encrypt(m.Packed[DestinationLength:])
-		m.setRatchetFromDestination()
+		if ratchetID := rns.IdentityCurrentRatchetID(m.DestinationHash); len(ratchetID) > 0 {
+			m.RatchetID = append([]byte(nil), ratchetID...)
+		}
 		m.PaperPacked = append(append([]byte{}, m.Packed[:DestinationLength]...), encrypted...)
 		contentSize = len(m.PaperPacked)
 		if contentSize <= paperContentLimit {
@@ -514,7 +515,9 @@ func (m *LXMessage) Send() {
 	case MethodOpportunistic:
 		pkt := m.asPacket()
 		receipt := pkt.Send()
-		m.setRatchetFromPacket(pkt)
+		if len(pkt.RatchetID) > 0 {
+			m.RatchetID = append([]byte(nil), pkt.RatchetID...)
+		}
 		if receipt != nil {
 			receipt.SetDeliveryCallback(func(_ *rns.PacketReceipt) { m.markDelivered(nil) })
 		}
@@ -526,17 +529,23 @@ func (m *LXMessage) Send() {
 		case RepresentationPacket:
 			pkt := m.asPacket()
 			receipt := pkt.Send()
-			m.setRatchetFromLink()
+			if link, ok := m.DeliveryDestination.(*rns.Link); ok && link != nil && len(link.LinkID) > 0 {
+				m.RatchetID = append([]byte(nil), link.LinkID...)
+			}
 			if receipt != nil {
 				receipt.SetDeliveryCallback(func(_ *rns.PacketReceipt) { m.markDelivered(nil) })
 				receipt.SetTimeoutCallback(m.linkPacketTimedOut)
 				m.Progress = 0.50
 			} else {
-				m.teardownDeliveryDestination()
+				if link, ok := m.DeliveryDestination.(*rns.Link); ok && link != nil {
+					link.Teardown()
+				}
 			}
 		case RepresentationResource:
 			m.ResourceRepresentation = m.asResource()
-			m.setRatchetFromLink()
+			if link, ok := m.DeliveryDestination.(*rns.Link); ok && link != nil && len(link.LinkID) > 0 {
+				m.RatchetID = append([]byte(nil), link.LinkID...)
+			}
 			m.Progress = 0.10
 		}
 	case MethodPropagated:
@@ -550,7 +559,9 @@ func (m *LXMessage) Send() {
 				receipt.SetTimeoutCallback(m.linkPacketTimedOut)
 				m.Progress = 0.50
 			} else {
-				m.teardownDeliveryDestination()
+				if link, ok := m.DeliveryDestination.(*rns.Link); ok && link != nil {
+					link.Teardown()
+				}
 			}
 		case RepresentationResource:
 			m.ResourceRepresentation = m.asResource()
@@ -562,33 +573,44 @@ func (m *LXMessage) Send() {
 func (m *LXMessage) DetermineTransportEncryption() {
 	switch m.Method {
 	case MethodOpportunistic:
-		m.setEncryptionForDestination()
+		switch m.destination.Type {
+		case rns.DestinationSINGLE:
+			m.TransportEncrypted = true
+			m.TransportEncryption = EncryptionDescriptionEC
+		case rns.DestinationGROUP:
+			m.TransportEncrypted = true
+			m.TransportEncryption = EncryptionDescriptionAES
+		default:
+			m.TransportEncrypted = false
+			m.TransportEncryption = EncryptionDescriptionUnencrypted
+		}
 	case MethodDirect:
 		m.TransportEncrypted = true
 		m.TransportEncryption = EncryptionDescriptionEC
 	case MethodPropagated:
-		m.setEncryptionForDestination()
+		switch m.destination.Type {
+		case rns.DestinationSINGLE:
+			m.TransportEncrypted = true
+			m.TransportEncryption = EncryptionDescriptionEC
+		case rns.DestinationGROUP:
+			m.TransportEncrypted = true
+			m.TransportEncryption = EncryptionDescriptionAES
+		default:
+			m.TransportEncrypted = false
+			m.TransportEncryption = EncryptionDescriptionUnencrypted
+		}
 	case MethodPaper:
-		m.setEncryptionForDestination()
-	default:
-		m.TransportEncrypted = false
-		m.TransportEncryption = EncryptionDescriptionUnencrypted
-	}
-}
-
-func (m *LXMessage) setEncryptionForDestination() {
-	if m.destination == nil {
-		m.TransportEncrypted = false
-		m.TransportEncryption = EncryptionDescriptionUnencrypted
-		return
-	}
-	switch m.destination.Type {
-	case rns.DestinationSINGLE:
-		m.TransportEncrypted = true
-		m.TransportEncryption = EncryptionDescriptionEC
-	case rns.DestinationGROUP:
-		m.TransportEncrypted = true
-		m.TransportEncryption = EncryptionDescriptionAES
+		switch m.destination.Type {
+		case rns.DestinationSINGLE:
+			m.TransportEncrypted = true
+			m.TransportEncryption = EncryptionDescriptionEC
+		case rns.DestinationGROUP:
+			m.TransportEncrypted = true
+			m.TransportEncryption = EncryptionDescriptionAES
+		default:
+			m.TransportEncrypted = false
+			m.TransportEncryption = EncryptionDescriptionUnencrypted
+		}
 	default:
 		m.TransportEncrypted = false
 		m.TransportEncryption = EncryptionDescriptionUnencrypted
@@ -599,21 +621,48 @@ func (m *LXMessage) markDelivered(_ *rns.PacketReceipt) {
 	rns.Log("Received delivery notification for "+m.String(), rns.LOG_DEBUG)
 	m.State = MessageDelivered
 	m.Progress = 1.0
-	m.invokeDeliveryCallback()
+	if m.DeliveryCallback == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			rns.Log("An error occurred in the external delivery callback for "+m.String()+": "+fmt.Sprint(r), rns.LOG_ERROR)
+			rns.TraceException(r)
+		}
+	}()
+	m.DeliveryCallback(m)
 }
 
 func (m *LXMessage) markPropagated(_ *rns.PacketReceipt) {
 	rns.Log("Received propagation success notification for "+m.String(), rns.LOG_DEBUG)
 	m.State = MessageSent
 	m.Progress = 1.0
-	m.invokeDeliveryCallback()
+	if m.DeliveryCallback == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			rns.Log("An error occurred in the external delivery callback for "+m.String()+": "+fmt.Sprint(r), rns.LOG_ERROR)
+			rns.TraceException(r)
+		}
+	}()
+	m.DeliveryCallback(m)
 }
 
 func (m *LXMessage) markPaperGenerated(_ *rns.PacketReceipt) {
 	rns.Log("Paper message generation succeeded for "+m.String(), rns.LOG_DEBUG)
 	m.State = MessagePaper
 	m.Progress = 1.0
-	m.invokeDeliveryCallback()
+	if m.DeliveryCallback == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			rns.Log("An error occurred in the external delivery callback for "+m.String()+": "+fmt.Sprint(r), rns.LOG_ERROR)
+			rns.TraceException(r)
+		}
+	}()
+	m.DeliveryCallback(m)
 }
 
 func (m *LXMessage) resourceConcluded(res *rns.Resource) {
@@ -669,7 +718,9 @@ func (m *LXMessage) updateTransferProgress(res *rns.Resource) {
 
 func (m *LXMessage) asPacket() *rns.Packet {
 	if len(m.Packed) == 0 {
-		_ = m.Pack(false)
+		if err := m.Pack(false); err != nil {
+			panic(err)
+		}
 	}
 	if m.DeliveryDestination == nil {
 		panic("can't synthesize packet for LXMF message before delivery destination is known")
@@ -688,7 +739,9 @@ func (m *LXMessage) asPacket() *rns.Packet {
 
 func (m *LXMessage) asResource() *rns.Resource {
 	if len(m.Packed) == 0 {
-		_ = m.Pack(false)
+		if err := m.Pack(false); err != nil {
+			panic(err)
+		}
 	}
 	link, ok := m.DeliveryDestination.(*rns.Link)
 	if !ok || link == nil {
@@ -698,13 +751,23 @@ func (m *LXMessage) asResource() *rns.Resource {
 		panic("tried to synthesize resource for LXMF message on a link that was not active")
 	}
 
-	callback := m.resourceConcluded
-	if m.Method == MethodPropagated {
+	var callback func(*rns.Resource)
+	switch m.Method {
+	case MethodDirect:
+		callback = m.resourceConcluded
+	case MethodPropagated:
 		callback = m.propagationResourceConcluded
+	default:
+		return nil
 	}
 
 	res, err := rns.NewResource(
-		m.resourcePayload(),
+		func() []byte {
+			if m.Method == MethodPropagated {
+				return m.PropagationPacked
+			}
+			return m.Packed
+		}(),
 		nil,
 		link,
 		nil,
@@ -723,13 +786,6 @@ func (m *LXMessage) asResource() *rns.Resource {
 		return nil
 	}
 	return res
-}
-
-func (m *LXMessage) resourcePayload() []byte {
-	if m.Method == MethodPropagated {
-		return m.PropagationPacked
-	}
-	return m.Packed
 }
 
 func (m *LXMessage) PackedContainer() ([]byte, error) {
@@ -773,7 +829,7 @@ func (m *LXMessage) AsURI(finalise bool) (string, error) {
 
 	if m.DesiredMethod == MethodPaper && len(m.PaperPacked) > 0 {
 		encoded := base64.URLEncoding.EncodeToString(m.PaperPacked)
-		encoded = trimBase64Padding(encoded)
+		encoded = strings.ReplaceAll(encoded, "=", "")
 		lxmURI := URISchema + "://" + encoded
 		if finalise {
 			m.DetermineTransportEncryption()
@@ -783,34 +839,6 @@ func (m *LXMessage) AsURI(finalise bool) (string, error) {
 	}
 
 	return "", errors.New("attempt to represent LXM with non-paper delivery method as URI")
-}
-
-func (m *LXMessage) AsQR() (any, error) {
-	if len(m.Packed) == 0 {
-		if err := m.Pack(false); err != nil {
-			return nil, err
-		}
-	}
-
-	if m.DesiredMethod == MethodPaper && len(m.PaperPacked) > 0 {
-		if qrGenerator == nil {
-			rns.Log("Generating QR-code representations of LXMs requires a QR generator to be registered.", rns.LOG_CRITICAL)
-			return nil, errors.New("QR output is not available; register a QR generator")
-		}
-		uri, err := m.AsURI(false)
-		if err != nil {
-			return nil, err
-		}
-		qr, err := qrGenerator(uri, QRErrorCorrection, QRBorder)
-		if err != nil {
-			return nil, err
-		}
-		m.DetermineTransportEncryption()
-		m.markPaperGenerated(nil)
-		return qr, nil
-	}
-
-	return nil, errors.New("attempt to represent LXM with non-paper delivery method as QR-code")
 }
 
 func UnpackFromBytes(lxmfBytes []byte, originalMethod byte) (*LXMessage, error) {
@@ -826,8 +854,11 @@ func UnpackFromBytes(lxmfBytes []byte, originalMethod byte) (*LXMessage, error) 
 
 	var stamp []byte
 	if len(unpacked) > 4 {
-		if b, ok := unpacked[4].([]byte); ok {
-			stamp = b
+		switch t := unpacked[4].(type) {
+		case []byte:
+			stamp = append([]byte(nil), t...)
+		case string:
+			stamp = []byte(t)
 		}
 		unpacked = unpacked[:4]
 		packedPayload, _ = umsgpack.Packb(unpacked)
@@ -838,10 +869,44 @@ func UnpackFromBytes(lxmfBytes []byte, originalMethod byte) (*LXMessage, error) 
 	messageHash := rns.FullHash(hashedPart)
 	signedPart := append(append([]byte{}, hashedPart...), messageHash...)
 
-	timestamp := floatFromAny(unpacked[0])
-	titleBytes := toBytes(unpacked[1])
-	contentBytes := toBytes(unpacked[2])
-	fields := coerceFields(unpacked[3])
+	timestamp := func() float64 {
+		switch t := unpacked[0].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}()
+	var titleBytes []byte
+	switch t := unpacked[1].(type) {
+	case []byte:
+		titleBytes = append([]byte(nil), t...)
+	case string:
+		titleBytes = []byte(t)
+	}
+	var contentBytes []byte
+	switch t := unpacked[2].(type) {
+	case []byte:
+		contentBytes = append([]byte(nil), t...)
+	case string:
+		contentBytes = []byte(t)
+	}
+	fields := map[any]any{}
+	switch t := unpacked[3].(type) {
+	case map[any]any:
+		fields = t
+	case map[string]any:
+		fields = make(map[any]any, len(t))
+		for k, v := range t {
+			fields[k] = v
+		}
+	}
 
 	var destination *rns.Destination
 	if destID := rns.IdentityRecall(destinationHash); destID != nil {
@@ -857,15 +922,15 @@ func UnpackFromBytes(lxmfBytes []byte, originalMethod byte) (*LXMessage, error) 
 		return nil, err
 	}
 	msg.Hash = messageHash
-	msg.MessageID = copyBytes(msg.Hash)
+	msg.MessageID = msg.Hash
 	msg.Signature = signature
 	msg.Stamp = stamp
 	msg.Incoming = true
 	msg.Timestamp = timestamp
-	msg.Packed = copyBytes(lxmfBytes)
+	msg.Packed = lxmfBytes
 	msg.PackedSize = len(lxmfBytes)
-	msg.SetTitleFromBytes(titleBytes)
-	msg.SetContentFromBytes(contentBytes)
+	msg.Title = titleBytes
+	msg.Content = contentBytes
 
 	if source != nil && source.Identity != nil {
 		if source.Identity.Validate(signature, signedPart) {
@@ -887,19 +952,23 @@ func UnpackFromFile(f *os.File) (*LXMessage, error) {
 	container := map[string]any{}
 	buf, err := io.ReadAll(f)
 	if err != nil {
-		return nil, err
+		rns.Log("Could not unpack LXMessage from file. The contained exception was: "+err.Error(), rns.LOG_ERROR)
+		return nil, nil
 	}
 	if err := umsgpack.Unpackb(buf, &container); err != nil {
-		return nil, err
+		rns.Log("Could not unpack LXMessage from file. The contained exception was: "+err.Error(), rns.LOG_ERROR)
+		return nil, nil
 	}
 
 	lxmBytes, ok := container["lxmf_bytes"].([]byte)
 	if !ok {
-		return nil, errors.New("invalid LXMF container: missing lxmf_bytes")
+		rns.Log("Could not unpack LXMessage from file. The contained exception was: invalid LXMF container: missing lxmf_bytes", rns.LOG_ERROR)
+		return nil, nil
 	}
 	msg, err := UnpackFromBytes(lxmBytes, 0)
 	if err != nil {
-		return nil, err
+		rns.Log("Could not unpack LXMessage from file. The contained exception was: "+err.Error(), rns.LOG_ERROR)
+		return nil, nil
 	}
 
 	if v, ok := container["state"].(int); ok {
@@ -916,137 +985,4 @@ func UnpackFromFile(f *os.File) (*LXMessage, error) {
 	}
 
 	return msg, nil
-}
-
-func (m *LXMessage) teardownDeliveryDestination() {
-	if m.DeliveryDestination == nil {
-		return
-	}
-	if link, ok := m.DeliveryDestination.(*rns.Link); ok && link != nil {
-		link.Teardown()
-	}
-}
-
-func nowSeconds() float64 {
-	return float64(time.Now().UnixNano()) / 1e9
-}
-
-func copyBytes(b []byte) []byte {
-	if len(b) == 0 {
-		return nil
-	}
-	out := make([]byte, len(b))
-	copy(out, b)
-	return out
-}
-
-func trimBase64Padding(s string) string {
-	for len(s) > 0 && s[len(s)-1] == '=' {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
-func (m *LXMessage) invokeDeliveryCallback() {
-	if m.DeliveryCallback == nil {
-		return
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			rns.Log("An error occurred in the external delivery callback for "+m.String()+": "+fmt.Sprint(r), rns.LOG_ERROR)
-		}
-	}()
-	m.DeliveryCallback(m)
-}
-
-func (m *LXMessage) setRatchetFromPacket(pkt *rns.Packet) {
-	if pkt == nil || len(pkt.RatchetID) == 0 {
-		return
-	}
-	m.RatchetID = copyBytes(pkt.RatchetID)
-}
-
-func (m *LXMessage) setRatchetFromLink() {
-	link, ok := m.DeliveryDestination.(*rns.Link)
-	if !ok || link == nil || len(link.LinkID) == 0 {
-		return
-	}
-	m.RatchetID = copyBytes(link.LinkID)
-}
-
-func (m *LXMessage) setRatchetFromDestination() {
-	if len(m.DestinationHash) == 0 {
-		return
-	}
-	if ratchetID := rns.IdentityCurrentRatchetID(m.DestinationHash); len(ratchetID) > 0 {
-		m.RatchetID = copyBytes(ratchetID)
-	}
-}
-
-func toBytes(v any) []byte {
-	switch t := v.(type) {
-	case []byte:
-		return copyBytes(t)
-	case string:
-		return []byte(t)
-	default:
-		return nil
-	}
-}
-
-type stampResult struct {
-	stamp []byte
-	value int
-}
-
-func generateStampWithTimeout(messageID []byte, cost int, expandRounds int, timeout *time.Duration) ([]byte, int) {
-	if timeout == nil || *timeout <= 0 {
-		return GenerateStamp(messageID, cost, expandRounds)
-	}
-	resultCh := make(chan stampResult, 1)
-	go func() {
-		stamp, value := GenerateStamp(messageID, cost, expandRounds)
-		resultCh <- stampResult{stamp: stamp, value: value}
-	}()
-
-	timer := time.NewTimer(*timeout)
-	defer timer.Stop()
-
-	select {
-	case result := <-resultCh:
-		return result.stamp, result.value
-	case <-timer.C:
-		CancelWork(messageID)
-		return nil, 0
-	}
-}
-
-func floatFromAny(v any) float64 {
-	switch t := v.(type) {
-	case float64:
-		return t
-	case int:
-		return float64(t)
-	case int64:
-		return float64(t)
-	case uint64:
-		return float64(t)
-	default:
-		return 0
-	}
-}
-
-func coerceFields(v any) map[any]any {
-	switch t := v.(type) {
-	case map[any]any:
-		return t
-	case map[string]any:
-		out := make(map[any]any, len(t))
-		for k, v := range t {
-			out[k] = v
-		}
-		return out
-	default:
-		return map[any]any{}
-	}
 }

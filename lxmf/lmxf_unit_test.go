@@ -21,9 +21,12 @@ func TestDisplayNameFromAppData(t *testing.T) {
 }
 
 func TestDisplayNameFromAppDataRejectsInvalidLegacyUTF8(t *testing.T) {
-	if got := DisplayNameFromAppData([]byte{0xff, 0xfe}); got != "" {
-		t.Fatalf("expected invalid legacy display name to be rejected, got %q", got)
-	}
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("expected invalid legacy display name to panic")
+		}
+	}()
+	_ = DisplayNameFromAppData([]byte{0xff, 0xfe})
 }
 
 func TestStampCostFromAppData(t *testing.T) {
@@ -31,8 +34,21 @@ func TestStampCostFromAppData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pack app data: %v", err)
 	}
-	if cost, ok := StampCostFromAppData(appData); !ok || cost != 7 {
-		t.Fatalf("expected stamp cost 7, got %d (ok=%v)", cost, ok)
+	if cost := StampCostFromAppData(appData); cost == nil {
+		t.Fatalf("expected stamp cost 7, got nil")
+	} else {
+		switch n := cost.(type) {
+		case int:
+			if n != 7 {
+				t.Fatalf("expected stamp cost 7, got %v", cost)
+			}
+		case int64:
+			if n != 7 {
+				t.Fatalf("expected stamp cost 7, got %v", cost)
+			}
+		default:
+			t.Fatalf("expected stamp cost 7, got %T %v", cost, cost)
+		}
 	}
 }
 
@@ -57,7 +73,20 @@ func TestPNAnnounceHelpers(t *testing.T) {
 	if name := PNNameFromAppData(appData); name != "node" {
 		t.Fatalf("unexpected PN name: %s", name)
 	}
-	if cost, ok := PNStampCostFromAppData(appData); !ok || cost != 16 {
-		t.Fatalf("unexpected PN stamp cost: %d (ok=%v)", cost, ok)
+	if cost := PNStampCostFromAppData(appData); cost == nil {
+		t.Fatalf("unexpected PN stamp cost: nil")
+	} else {
+		switch n := cost.(type) {
+		case int:
+			if n != 16 {
+				t.Fatalf("unexpected PN stamp cost: %v", cost)
+			}
+		case int64:
+			if n != 16 {
+				t.Fatalf("unexpected PN stamp cost: %v", cost)
+			}
+		default:
+			t.Fatalf("unexpected PN stamp cost: %T %v", cost, cost)
+		}
 	}
 }

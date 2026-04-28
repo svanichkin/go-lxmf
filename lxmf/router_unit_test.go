@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/svanichkin/go-reticulum/rns"
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
@@ -30,7 +31,7 @@ func TestRouterGetWeightAndStampValue(t *testing.T) {
 	id := []byte("id")
 	router.PropagationEntries[string(id)] = &propagationEntry{
 		DestinationHash: []byte("dest"),
-		Received:        nowSeconds() - 10,
+		Received:        float64(time.Now().UnixNano())/1e9 - 10,
 		Size:            100,
 		StampValue:      7,
 	}
@@ -64,8 +65,8 @@ func TestRouterCleanThrottledPeers(t *testing.T) {
 	router := &LXMRouter{
 		ThrottledPeers: map[string]float64{},
 	}
-	router.ThrottledPeers["a"] = nowSeconds() - 10
-	router.ThrottledPeers["b"] = nowSeconds() + 10
+	router.ThrottledPeers["a"] = float64(time.Now().UnixNano())/1e9 - 10
+	router.ThrottledPeers["b"] = float64(time.Now().UnixNano())/1e9 + 10
 	router.CleanThrottledPeers()
 	if _, ok := router.ThrottledPeers["a"]; ok {
 		t.Fatalf("expected expired throttle to be removed")
@@ -179,7 +180,7 @@ func TestRouterCleanMessageStoreIgnoresInformationStorageLimit(t *testing.T) {
 		transientID[i] = byte(i)
 	}
 	stampValue := 1
-	received := nowSeconds()
+	received := float64(time.Now().UnixNano()) / 1e9
 	fileName := fmt.Sprintf("%s_%f_%d", rns.HexRep(transientID, false), received, stampValue)
 	msgPath := filepath.Join(tmpDir, fileName)
 	if err := os.WriteFile(msgPath, []byte("payload"), 0o600); err != nil {

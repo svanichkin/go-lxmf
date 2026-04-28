@@ -1,6 +1,7 @@
 package lxmf
 
 import (
+	"bytes"
 	crypto_rand "crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -620,11 +621,11 @@ func (r *LXMRouter) SetOutboundPropagationNode(destinationHash []byte) error {
 	if len(destinationHash) != rns.ReticulumTruncatedHashLength/8 {
 		return errors.New("invalid destination hash for outbound propagation node")
 	}
-	if r.OutboundPropagationNode != nil && bytesEqual(r.OutboundPropagationNode, destinationHash) {
+	if r.OutboundPropagationNode != nil && bytes.Equal(r.OutboundPropagationNode, destinationHash) {
 		return nil
 	}
-	r.OutboundPropagationNode = copyBytes(destinationHash)
-	if r.OutboundPropagationLink != nil && (r.OutboundPropagationLink.Destination == nil || !bytesEqual(r.OutboundPropagationLink.Destination.Hash, destinationHash)) {
+	r.OutboundPropagationNode = append([]byte(nil), destinationHash...)
+	if r.OutboundPropagationLink != nil && (r.OutboundPropagationLink.Destination == nil || !bytes.Equal(r.OutboundPropagationLink.Destination.Hash, destinationHash)) {
 		r.OutboundPropagationLink.Teardown()
 		r.OutboundPropagationLink = nil
 	}
@@ -632,7 +633,7 @@ func (r *LXMRouter) SetOutboundPropagationNode(destinationHash []byte) error {
 }
 
 func (r *LXMRouter) GetOutboundPropagationNode() []byte {
-	return copyBytes(r.OutboundPropagationNode)
+	return append([]byte(nil), r.OutboundPropagationNode...)
 }
 
 func (r *LXMRouter) GetOutboundPropagationCost() *int {
@@ -646,7 +647,44 @@ func (r *LXMRouter) GetOutboundPropagationCost() *int {
 		var config []any
 		if err := umsgpack.Unpackb(appData, &config); err == nil && len(config) > 5 {
 			if costs, ok := config[5].([]any); ok && len(costs) > 0 {
-				if cost, ok := asInt(costs[0]); ok {
+				if cost, ok := func() (int, bool) {
+					switch t := costs[0].(type) {
+					case int:
+						return t, true
+					case *int:
+						if t == nil {
+							return 0, false
+						}
+						return *t, true
+					case int8:
+						return int(t), true
+					case int16:
+						return int(t), true
+					case int32:
+						return int(t), true
+					case int64:
+						return int(t), true
+					case uint:
+						return int(t), true
+					case uint8:
+						return int(t), true
+					case uint16:
+						return int(t), true
+					case uint32:
+						return int(t), true
+					case uint64:
+						return int(t), true
+					case float64:
+						return int(t), true
+					case bool:
+						if t {
+							return 1, true
+						}
+						return 0, true
+					default:
+						return 0, false
+					}
+				}(); ok {
 					targetPropagationCost = &cost
 				}
 			}
@@ -666,7 +704,44 @@ func (r *LXMRouter) GetOutboundPropagationCost() *int {
 			var config []any
 			if err := umsgpack.Unpackb(appData, &config); err == nil && len(config) > 5 {
 				if costs, ok := config[5].([]any); ok && len(costs) > 0 {
-					if cost, ok := asInt(costs[0]); ok {
+					if cost, ok := func() (int, bool) {
+						switch t := costs[0].(type) {
+						case int:
+							return t, true
+						case *int:
+							if t == nil {
+								return 0, false
+							}
+							return *t, true
+						case int8:
+							return int(t), true
+						case int16:
+							return int(t), true
+						case int32:
+							return int(t), true
+						case int64:
+							return int(t), true
+						case uint:
+							return int(t), true
+						case uint8:
+							return int(t), true
+						case uint16:
+							return int(t), true
+						case uint32:
+							return int(t), true
+						case uint64:
+							return int(t), true
+						case float64:
+							return int(t), true
+						case bool:
+							if t {
+								return 1, true
+							}
+							return 0, true
+						default:
+							return 0, false
+						}
+					}(); ok {
 						targetPropagationCost = &cost
 					}
 				}
@@ -741,7 +816,7 @@ func (r *LXMRouter) RequestMessagesFromPropagationNode(identity *rns.Identity, m
 
 	rns.Log("No path known for message download from propagation node "+rns.PrettyHexRep(r.OutboundPropagationNode)+". Requesting path...", rns.LOG_DEBUG)
 	rns.RequestPath(r.OutboundPropagationNode, nil, nil, false)
-	r.WantsDownloadOnPathAvailableFrom = copyBytes(r.OutboundPropagationNode)
+	r.WantsDownloadOnPathAvailableFrom = append([]byte(nil), r.OutboundPropagationNode...)
 	r.WantsDownloadOnPathAvailableTo = identity
 	r.WantsDownloadOnPathAvailableTimeout = time.Now().Add(time.Duration(PRPathTimeout) * time.Second)
 	r.PropagationTransferState = PRPathRequested
@@ -787,7 +862,47 @@ func (r *LXMRouter) MessageListResponse(receipt *rns.RequestReceipt) {
 	}
 
 	responseAny := receipt.GetResponse()
-	if code, ok := intFromAny(responseAny); ok {
+	code := 0
+	codeSet := false
+	switch v := responseAny.(type) {
+	case int:
+		code = v
+		codeSet = true
+	case int8:
+		code = int(v)
+		codeSet = true
+	case int16:
+		code = int(v)
+		codeSet = true
+	case int32:
+		code = int(v)
+		codeSet = true
+	case int64:
+		code = int(v)
+		codeSet = true
+	case uint:
+		code = int(v)
+		codeSet = true
+	case uint8:
+		code = int(v)
+		codeSet = true
+	case uint16:
+		code = int(v)
+		codeSet = true
+	case uint32:
+		code = int(v)
+		codeSet = true
+	case uint64:
+		code = int(v)
+		codeSet = true
+	case float32:
+		code = int(v)
+		codeSet = true
+	case float64:
+		code = int(v)
+		codeSet = true
+	}
+	if codeSet {
 		switch code {
 		case PeerErrorNoIdentity:
 			rns.Log("Propagation node indicated missing identification on list request, tearing down link.", rns.LOG_DEBUG)
@@ -814,7 +929,35 @@ func (r *LXMRouter) MessageListResponse(receipt *rns.RequestReceipt) {
 		}
 		return
 	}
-	response := decodeIDList(responseList)
+	response := func(v []any) [][]byte {
+		out := make([][]byte, 0, len(v))
+		for _, entry := range v {
+			switch ids := entry.(type) {
+			case []byte:
+				if len(ids) > 0 {
+					out = append(out, append([]byte(nil), ids...))
+				}
+			case string:
+				if ids != "" {
+					out = append(out, []byte(ids))
+				}
+			default:
+				if id := func() []byte {
+					switch t := entry.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}(); len(id) > 0 {
+					out = append(out, id)
+				}
+			}
+		}
+		return out
+	}(responseList)
 
 	haves := make([][]byte, 0)
 	wants := make([][]byte, 0)
@@ -861,7 +1004,47 @@ func (r *LXMRouter) MessageGetResponse(receipt *rns.RequestReceipt) {
 	}
 
 	responseAny := receipt.GetResponse()
-	if code, ok := intFromAny(responseAny); ok {
+	code := 0
+	codeSet := false
+	switch v := responseAny.(type) {
+	case int:
+		code = v
+		codeSet = true
+	case int8:
+		code = int(v)
+		codeSet = true
+	case int16:
+		code = int(v)
+		codeSet = true
+	case int32:
+		code = int(v)
+		codeSet = true
+	case int64:
+		code = int(v)
+		codeSet = true
+	case uint:
+		code = int(v)
+		codeSet = true
+	case uint8:
+		code = int(v)
+		codeSet = true
+	case uint16:
+		code = int(v)
+		codeSet = true
+	case uint32:
+		code = int(v)
+		codeSet = true
+	case uint64:
+		code = int(v)
+		codeSet = true
+	case float32:
+		code = int(v)
+		codeSet = true
+	case float64:
+		code = int(v)
+		codeSet = true
+	}
+	if codeSet {
 		switch code {
 		case PeerErrorNoIdentity:
 			rns.Log("Propagation node indicated missing identification on get request, tearing down link.", rns.LOG_DEBUG)
@@ -888,7 +1071,35 @@ func (r *LXMRouter) MessageGetResponse(receipt *rns.RequestReceipt) {
 		}
 		return
 	}
-	response := decodeIDList(responseList)
+	response := func(v []any) [][]byte {
+		out := make([][]byte, 0, len(v))
+		for _, entry := range v {
+			switch ids := entry.(type) {
+			case []byte:
+				if len(ids) > 0 {
+					out = append(out, append([]byte(nil), ids...))
+				}
+			case string:
+				if ids != "" {
+					out = append(out, []byte(ids))
+				}
+			default:
+				if id := func() []byte {
+					switch t := entry.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}(); len(id) > 0 {
+					out = append(out, id)
+				}
+			}
+		}
+		return out
+	}(responseList)
 	duplicates := 0
 	haves := make([][]byte, 0)
 
@@ -963,8 +1174,47 @@ func (r *LXMRouter) PropagationTransferSignallingPacket(data []byte, packet *rns
 	if len(unpacked) == 0 {
 		return
 	}
-	code, ok := intFromAny(unpacked[0])
-	if !ok {
+	code := 0
+	codeSet := false
+	switch v := unpacked[0].(type) {
+	case int:
+		code = v
+		codeSet = true
+	case int8:
+		code = int(v)
+		codeSet = true
+	case int16:
+		code = int(v)
+		codeSet = true
+	case int32:
+		code = int(v)
+		codeSet = true
+	case int64:
+		code = int(v)
+		codeSet = true
+	case uint:
+		code = int(v)
+		codeSet = true
+	case uint8:
+		code = int(v)
+		codeSet = true
+	case uint16:
+		code = int(v)
+		codeSet = true
+	case uint32:
+		code = int(v)
+		codeSet = true
+	case uint64:
+		code = int(v)
+		codeSet = true
+	case float32:
+		code = int(v)
+		codeSet = true
+	case float64:
+		code = int(v)
+		codeSet = true
+	}
+	if !codeSet {
 		return
 	}
 	if code != PeerErrorInvalidStamp {
@@ -1026,7 +1276,7 @@ func (r *LXMRouter) EnablePropagation() error {
 	r.loadNodeStats()
 
 	r.PropagationNode = true
-	r.PropagationNodeStartTime = nowSeconds()
+	r.PropagationNodeStartTime = float64(time.Now().UnixNano()) / 1e9
 	if r.PropagationDestination != nil {
 		r.PropagationDestination.SetLinkEstablishedCallback(r.PropagationLinkEstablished)
 		r.PropagationDestination.SetPacketCallback(r.PropagationPacket)
@@ -1107,7 +1357,7 @@ func (r *LXMRouter) SetInformationStorageLimit(kb, mb, gb int) error {
 
 func (r *LXMRouter) UpdateStampCost(destinationHash []byte, cost any) {
 	rns.Log("Updating outbound stamp cost for "+rns.PrettyHexRep(destinationHash)+" to "+fmt.Sprintf("%v", cost), rns.LOG_DEBUG)
-	r.OutboundStampCosts[string(destinationHash)] = []any{nowSeconds(), cost}
+	r.OutboundStampCosts[string(destinationHash)] = []any{float64(time.Now().UnixNano()) / 1e9, cost}
 	go r.saveOutboundStampCosts()
 }
 
@@ -1149,7 +1399,7 @@ func (r *LXMRouter) ProcessOutbound() {
 			if msg.IncludeTicket {
 				if _, ok := msg.Fields[FieldTicket]; ok {
 					rns.Log("Updating latest ticket delivery for "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
-					r.AvailableTickets.LastDeliveries[string(msg.DestinationHash)] = nowSeconds()
+					r.AvailableTickets.LastDeliveries[string(msg.DestinationHash)] = float64(time.Now().UnixNano()) / 1e9
 					r.saveAvailableTickets()
 				}
 			}
@@ -1205,7 +1455,7 @@ func (r *LXMRouter) ProcessOutbound() {
 		if msg.Progress < 0.01 {
 			msg.Progress = 0.01
 		}
-		if msg.NextDeliveryAttempt > nowSeconds() {
+		if msg.NextDeliveryAttempt > float64(time.Now().UnixNano())/1e9 {
 			i++
 			continue
 		}
@@ -1221,7 +1471,7 @@ func (r *LXMRouter) ProcessOutbound() {
 					rns.Log("Requesting path to "+rns.PrettyHexRep(msg.DestinationHash)+" after "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" pathless tries for "+msg.String(), rns.LOG_DEBUG)
 					msg.DeliveryAttempts++
 					rns.RequestPath(msg.DestinationHash, nil, nil, false)
-					msg.NextDeliveryAttempt = nowSeconds() + float64(PathRequestWait)
+					msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(PathRequestWait)
 					msg.Progress = 0.01
 				} else if msg.DeliveryAttempts == MaxPathlessTries+1 && rns.HasPath(msg.DestinationHash) {
 					rns.Log("Opportunistic delivery for "+msg.String()+" still unsuccessful after "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" attempts, trying to rediscover path to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
@@ -1234,12 +1484,12 @@ func (r *LXMRouter) ProcessOutbound() {
 						time.Sleep(500 * time.Millisecond)
 						rns.RequestPath(destinationHash, nil, nil, false)
 					}()
-					msg.NextDeliveryAttempt = nowSeconds() + float64(PathRequestWait)
+					msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(PathRequestWait)
 					msg.Progress = 0.01
 				} else {
-					if msg.NextDeliveryAttempt == 0 || nowSeconds() > msg.NextDeliveryAttempt {
+					if msg.NextDeliveryAttempt == 0 || float64(time.Now().UnixNano())/1e9 > msg.NextDeliveryAttempt {
 						msg.DeliveryAttempts++
-						msg.NextDeliveryAttempt = nowSeconds() + float64(DeliveryRetryWait)
+						msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(DeliveryRetryWait)
 						rns.Log("Opportunistic delivery attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" for "+msg.String()+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
 						msg.Send()
 					}
@@ -1285,7 +1535,7 @@ func (r *LXMRouter) ProcessOutbound() {
 							} else {
 								rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" was never activated", rns.LOG_DEBUG)
 							}
-							msg.NextDeliveryAttempt = nowSeconds() + float64(PathRequestWait)
+							msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(PathRequestWait)
 						} else {
 							rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" was closed unexpectedly, retrying path request...", rns.LOG_DEBUG)
 							rns.RequestPath(msg.DestinationHash, nil, nil, false)
@@ -1293,14 +1543,14 @@ func (r *LXMRouter) ProcessOutbound() {
 						msg.SetDeliveryDestination(nil)
 						delete(r.DirectLinks, string(msg.DestinationHash))
 						delete(r.BackchannelLinks, string(msg.DestinationHash))
-						msg.NextDeliveryAttempt = nowSeconds() + float64(DeliveryRetryWait)
+						msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(DeliveryRetryWait)
 					default:
 						rns.Log("The link to "+rns.PrettyHexRep(msg.DestinationHash)+" is pending, waiting for link to become active", rns.LOG_DEBUG)
 					}
 				} else {
-					if msg.NextDeliveryAttempt == 0 || nowSeconds() > msg.NextDeliveryAttempt {
+					if msg.NextDeliveryAttempt == 0 || float64(time.Now().UnixNano())/1e9 > msg.NextDeliveryAttempt {
 						msg.DeliveryAttempts++
-						msg.NextDeliveryAttempt = nowSeconds() + float64(DeliveryRetryWait)
+						msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(DeliveryRetryWait)
 						if msg.DeliveryAttempts < MaxDeliveryAttempts {
 							if rns.HasPath(msg.DestinationHash) {
 								rns.Log("Establishing link to "+rns.PrettyHexRep(msg.DestinationHash)+" for delivery attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
@@ -1309,7 +1559,7 @@ func (r *LXMRouter) ProcessOutbound() {
 							} else {
 								rns.Log("No path known for delivery attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(msg.DestinationHash)+". Requesting path...", rns.LOG_DEBUG)
 								rns.RequestPath(msg.DestinationHash, nil, nil, false)
-								msg.NextDeliveryAttempt = nowSeconds() + float64(PathRequestWait)
+								msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(PathRequestWait)
 								msg.Progress = 0.01
 							}
 						}
@@ -1343,14 +1593,14 @@ func (r *LXMRouter) ProcessOutbound() {
 					case rns.LinkClosed:
 						rns.Log("The link to "+rns.PrettyHexRep(r.OutboundPropagationNode)+" was closed", rns.LOG_DEBUG)
 						r.OutboundPropagationLink = nil
-						msg.NextDeliveryAttempt = nowSeconds() + float64(DeliveryRetryWait)
+						msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(DeliveryRetryWait)
 					default:
 						rns.Log("The propagation link to "+rns.PrettyHexRep(r.OutboundPropagationNode)+" is pending, waiting for link to become active", rns.LOG_DEBUG)
 					}
 				} else {
-					if msg.NextDeliveryAttempt == 0 || nowSeconds() > msg.NextDeliveryAttempt {
+					if msg.NextDeliveryAttempt == 0 || float64(time.Now().UnixNano())/1e9 > msg.NextDeliveryAttempt {
 						msg.DeliveryAttempts++
-						msg.NextDeliveryAttempt = nowSeconds() + float64(DeliveryRetryWait)
+						msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(DeliveryRetryWait)
 						if msg.DeliveryAttempts < MaxDeliveryAttempts {
 							if rns.HasPath(r.OutboundPropagationNode) {
 								rns.Log("Establishing link to "+rns.PrettyHexRep(r.OutboundPropagationNode)+" for propagation attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(msg.DestinationHash), rns.LOG_DEBUG)
@@ -1359,7 +1609,7 @@ func (r *LXMRouter) ProcessOutbound() {
 							} else {
 								rns.Log("No path known for propagation attempt "+fmt.Sprintf("%d", msg.DeliveryAttempts)+" to "+rns.PrettyHexRep(r.OutboundPropagationNode)+". Requesting path...", rns.LOG_DEBUG)
 								rns.RequestPath(r.OutboundPropagationNode, nil, nil, false)
-								msg.NextDeliveryAttempt = nowSeconds() + float64(PathRequestWait)
+								msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(PathRequestWait)
 							}
 						}
 					}
@@ -1489,7 +1739,7 @@ func (r *LXMRouter) ProcessDeferredStamps() {
 }
 
 func (r *LXMRouter) CleanTransientIDCaches() {
-	now := nowSeconds()
+	now := float64(time.Now().UnixNano()) / 1e9
 	removedEntries := []string{}
 	for transientID, timestamp := range r.LocallyDelivered {
 		if now > timestamp+float64(MessageExpiry)*6.0 {
@@ -1774,7 +2024,7 @@ func (r *LXMRouter) HandleOutbound(msg *LXMessage) {
 	if !rns.HasPath(destinationHash) && msg.Method == MethodOpportunistic {
 		rns.Log("Pre-emptively requesting unknown path for opportunistic "+msg.String(), rns.LOG_DEBUG)
 		rns.RequestPath(destinationHash, nil, nil, false)
-		msg.NextDeliveryAttempt = nowSeconds() + float64(PathRequestWait)
+		msg.NextDeliveryAttempt = float64(time.Now().UnixNano())/1e9 + float64(PathRequestWait)
 		unknownPathRequested = true
 	}
 
@@ -1804,7 +2054,7 @@ func (r *LXMRouter) HandleOutbound(msg *LXMessage) {
 
 func (r *LXMRouter) StaticPeer(destinationHash []byte) bool {
 	for _, peer := range r.StaticPeers {
-		if bytesEqual(peer, destinationHash) {
+		if bytes.Equal(peer, destinationHash) {
 			return true
 		}
 	}
@@ -1831,13 +2081,50 @@ func (r *LXMRouter) Peer(destinationHash []byte, nodeTimebase int, propagationTr
 			peer.SyncBackoff = 0
 			peer.NextSyncAttempt = 0
 			peer.PeeringTimebase = float64(nodeTimebase)
-			peer.LastHeard = nowSeconds()
+			peer.LastHeard = float64(time.Now().UnixNano()) / 1e9
 			peer.PropagationStampCost = propagationStampCost
 			peer.PropagationStampCostFlexibility = propagationStampCostFlexibility
 			peer.PeeringCost = peeringCost
 			peer.PropagationTransferLimit = float64(propagationTransferLimit)
 			if propagationSyncLimit != nil {
-				if syncLimit, ok := asInt(propagationSyncLimit); ok {
+				if syncLimit, ok := func() (int, bool) {
+					switch t := propagationSyncLimit.(type) {
+					case int:
+						return t, true
+					case *int:
+						if t == nil {
+							return 0, false
+						}
+						return *t, true
+					case int8:
+						return int(t), true
+					case int16:
+						return int(t), true
+					case int32:
+						return int(t), true
+					case int64:
+						return int(t), true
+					case uint:
+						return int(t), true
+					case uint8:
+						return int(t), true
+					case uint16:
+						return int(t), true
+					case uint32:
+						return int(t), true
+					case uint64:
+						return int(t), true
+					case float64:
+						return int(t), true
+					case bool:
+						if t {
+							return 1, true
+						}
+						return 0, true
+					default:
+						return 0, false
+					}
+				}(); ok {
 					peer.PropagationSyncLimit = float64(syncLimit)
 				} else {
 					peer.PropagationSyncLimit = float64(propagationTransferLimit)
@@ -1858,13 +2145,50 @@ func (r *LXMRouter) Peer(destinationHash []byte, nodeTimebase int, propagationTr
 	peer = NewLXMPeer(r, destinationHash, r.DefaultSyncStrategy)
 	peer.Alive = true
 	peer.Metadata = metadata
-	peer.LastHeard = nowSeconds()
+	peer.LastHeard = float64(time.Now().UnixNano()) / 1e9
 	peer.PropagationStampCost = propagationStampCost
 	peer.PropagationStampCostFlexibility = propagationStampCostFlexibility
 	peer.PeeringCost = peeringCost
 	peer.PropagationTransferLimit = float64(propagationTransferLimit)
 	if propagationSyncLimit != nil {
-		if syncLimit, ok := asInt(propagationSyncLimit); ok {
+		if syncLimit, ok := func() (int, bool) {
+			switch t := propagationSyncLimit.(type) {
+			case int:
+				return t, true
+			case *int:
+				if t == nil {
+					return 0, false
+				}
+				return *t, true
+			case int8:
+				return int(t), true
+			case int16:
+				return int(t), true
+			case int32:
+				return int(t), true
+			case int64:
+				return int(t), true
+			case uint:
+				return int(t), true
+			case uint8:
+				return int(t), true
+			case uint16:
+				return int(t), true
+			case uint32:
+				return int(t), true
+			case uint64:
+				return int(t), true
+			case float64:
+				return int(t), true
+			case bool:
+				if t {
+					return 1, true
+				}
+				return 0, true
+			default:
+				return 0, false
+			}
+		}(); ok {
 			peer.PropagationSyncLimit = float64(syncLimit)
 		} else {
 			peer.PropagationSyncLimit = float64(propagationTransferLimit)
@@ -1878,9 +2202,22 @@ func (r *LXMRouter) Peer(destinationHash []byte, nodeTimebase int, propagationTr
 }
 
 func (r *LXMRouter) Unpeer(destinationHash []byte, nodeTimebase any) {
-	timestamp := nowSeconds()
+	timestamp := float64(time.Now().UnixNano()) / 1e9
 	if nodeTimebase != nil {
-		timestamp = floatFromAny(nodeTimebase)
+		timestamp = func() float64 {
+			switch t := nodeTimebase.(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}()
 	}
 	if peer, ok := r.Peers[string(destinationHash)]; ok {
 		if timestamp >= peer.PeeringTimebase {
@@ -1891,7 +2228,7 @@ func (r *LXMRouter) Unpeer(destinationHash []byte, nodeTimebase any) {
 					break
 				}
 			}
-			rns.Log("Broke peering with "+peer.String(), rns.LOG_INFO)
+			rns.Log("Broke peering with "+rns.PrettyHexRep(peer.DestinationHash), rns.LOG_INFO)
 		}
 	}
 }
@@ -1902,7 +2239,7 @@ func (r *LXMRouter) GetSize(transientID []byte) int64 {
 
 func (r *LXMRouter) GetWeight(transientID []byte) float64 {
 	entry := r.PropagationEntries[string(transientID)]
-	ageWeight := math.Max(1, (nowSeconds()-entry.Received)/(60*60*24*4))
+	ageWeight := math.Max(1, (float64(time.Now().UnixNano())/1e9-entry.Received)/(60*60*24*4))
 	priorityWeight := 1.0
 	for _, prioritised := range r.PrioritisedList {
 		if prioritised == string(entry.DestinationHash) {
@@ -1939,7 +2276,7 @@ func (r *LXMRouter) CancelOutbound(messageID []byte, cancelState byte) {
 	}
 
 	for _, msg := range r.PendingOutbound {
-		if msg != nil && bytesEqual(msg.MessageID, messageID) {
+		if msg != nil && bytes.Equal(msg.MessageID, messageID) {
 			lxmessage = msg
 		}
 	}
@@ -1977,13 +2314,13 @@ func (r *LXMRouter) failMessage(msg *LXMessage) {
 
 func (r *LXMRouter) GetOutboundProgress(lxmHash []byte) *float64 {
 	for _, msg := range r.PendingOutbound {
-		if bytesEqual(msg.Hash, lxmHash) {
+		if bytes.Equal(msg.Hash, lxmHash) {
 			val := msg.Progress
 			return &val
 		}
 	}
 	for _, msg := range r.PendingDeferredStamps {
-		if bytesEqual(msg.Hash, lxmHash) {
+		if bytes.Equal(msg.Hash, lxmHash) {
 			val := msg.Progress
 			return &val
 		}
@@ -1993,7 +2330,7 @@ func (r *LXMRouter) GetOutboundProgress(lxmHash []byte) *float64 {
 
 func (r *LXMRouter) GetOutboundLXMStampCost(lxmHash []byte) any {
 	for _, msg := range r.PendingOutbound {
-		if bytesEqual(msg.Hash, lxmHash) {
+		if bytes.Equal(msg.Hash, lxmHash) {
 			if msg.OutboundTicket != nil {
 				return nil
 			}
@@ -2001,7 +2338,7 @@ func (r *LXMRouter) GetOutboundLXMStampCost(lxmHash []byte) any {
 		}
 	}
 	for _, msg := range r.PendingDeferredStamps {
-		if bytesEqual(msg.Hash, lxmHash) {
+		if bytes.Equal(msg.Hash, lxmHash) {
 			if msg.OutboundTicket != nil {
 				return nil
 			}
@@ -2013,7 +2350,7 @@ func (r *LXMRouter) GetOutboundLXMStampCost(lxmHash []byte) any {
 
 func (r *LXMRouter) GetOutboundLXMPropagationStampCost(lxmHash []byte) *int {
 	for _, msg := range r.PendingOutbound {
-		if bytesEqual(msg.Hash, lxmHash) {
+		if bytes.Equal(msg.Hash, lxmHash) {
 			if msg.PropagationTargetCost == nil {
 				return nil
 			}
@@ -2022,7 +2359,7 @@ func (r *LXMRouter) GetOutboundLXMPropagationStampCost(lxmHash []byte) *int {
 		}
 	}
 	for _, msg := range r.PendingDeferredStamps {
-		if bytesEqual(msg.Hash, lxmHash) {
+		if bytes.Equal(msg.Hash, lxmHash) {
 			if msg.PropagationTargetCost == nil {
 				return nil
 			}
@@ -2066,9 +2403,31 @@ func (r *LXMRouter) LXMDelivery(lxmfData []byte, destinationType int, phyStats m
 	if msg.SignatureValidated {
 		if entry, ok := msg.Fields[FieldTicket]; ok {
 			if ticketEntry, ok := entry.([]any); ok && len(ticketEntry) > 1 {
-				expires := floatFromAny(ticketEntry[0])
-				ticket := toBytes(ticketEntry[1])
-				if nowSeconds() < expires && len(ticket) == TicketLength {
+				expires := func() float64 {
+					switch t := ticketEntry[0].(type) {
+					case float64:
+						return t
+					case int:
+						return float64(t)
+					case int64:
+						return float64(t)
+					case uint64:
+						return float64(t)
+					default:
+						return 0
+					}
+				}()
+				ticket := func() []byte {
+					switch t := ticketEntry[1].(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}()
+				if float64(time.Now().UnixNano())/1e9 < expires && len(ticket) == TicketLength {
 					r.RememberTicket(msg.SourceHash, ticketEntry)
 					go r.saveAvailableTickets()
 				}
@@ -2081,7 +2440,44 @@ func (r *LXMRouter) LXMDelivery(lxmfData []byte, destinationType int, phyStats m
 		panic(fmt.Errorf("delivery destination not found"))
 	}
 	if dest.StampCost != nil {
-		requiredCost, ok := asInt(dest.StampCost)
+		requiredCost, ok := func() (int, bool) {
+			switch t := dest.StampCost.(type) {
+			case int:
+				return t, true
+			case *int:
+				if t == nil {
+					return 0, false
+				}
+				return *t, true
+			case int8:
+				return int(t), true
+			case int16:
+				return int(t), true
+			case int32:
+				return int(t), true
+			case int64:
+				return int(t), true
+			case uint:
+				return int(t), true
+			case uint8:
+				return int(t), true
+			case uint16:
+				return int(t), true
+			case uint32:
+				return int(t), true
+			case uint64:
+				return int(t), true
+			case float64:
+				return int(t), true
+			case bool:
+				if t {
+					return 1, true
+				}
+				return 0, true
+			default:
+				return 0, false
+			}
+		}()
 		if !ok {
 			requiredCost = 0
 		}
@@ -2143,7 +2539,7 @@ func (r *LXMRouter) LXMDelivery(lxmfData []byte, destinationType int, phyStats m
 		rns.Log(r.String()+" ignored already received message from "+rns.PrettyHexRep(msg.SourceHash), rns.LOG_DEBUG)
 		return false
 	}
-	r.LocallyDelivered[string(msg.Hash)] = nowSeconds()
+	r.LocallyDelivered[string(msg.Hash)] = float64(time.Now().UnixNano()) / 1e9
 
 	if r.DeliveryCallback != nil {
 		func() {
@@ -2231,8 +2627,14 @@ func (r *LXMRouter) CompileStats() map[any]any {
 			peerType = "static"
 		}
 		peerName := any(nil)
-		if name := peer.Name(); name != "" {
-			peerName = name
+		if pName, ok := peer.Metadata[PNMetaName]; ok {
+			if nameBytes, ok := pName.([]byte); ok {
+				if len(nameBytes) > 0 {
+					peerName = string(nameBytes)
+				}
+			} else if nameStr, ok := pName.(string); ok && nameStr != "" {
+				peerName = nameStr
+			}
 		}
 		peerStats[peerID] = map[string]any{
 			"type":                   peerType,
@@ -2243,7 +2645,7 @@ func (r *LXMRouter) CompileStats() map[any]any {
 			"next_sync_attempt":      peer.NextSyncAttempt,
 			"last_sync_attempt":      peer.LastSyncAttempt,
 			"sync_backoff":           peer.SyncBackoff,
-			"peering_timebase":       int(peer.PeeringTimebase),
+			"peering_timebase":       peer.PeeringTimebase,
 			"ler":                    int(peer.LinkEstablishmentRate),
 			"str":                    int(peer.SyncTransferRate),
 			"transfer_limit":         peer.PropagationTransferLimit,
@@ -2252,8 +2654,33 @@ func (r *LXMRouter) CompileStats() map[any]any {
 			"stamp_cost_flexibility": peer.PropagationStampCostFlexibility,
 			"peering_cost":           peer.PeeringCost,
 			"peering_key": func() any {
-				if v := peer.PeeringKeyValue(); v != nil {
-					return *v
+				if len(peer.PeeringKey) == 2 {
+					switch v := peer.PeeringKey[1].(type) {
+					case int:
+						return v
+					case int8:
+						return int(v)
+					case int16:
+						return int(v)
+					case int32:
+						return int(v)
+					case int64:
+						return int(v)
+					case uint:
+						return int(v)
+					case uint8:
+						return int(v)
+					case uint16:
+						return int(v)
+					case uint32:
+						return int(v)
+					case uint64:
+						return int(v)
+					case float32:
+						return int(v)
+					case float64:
+						return int(v)
+					}
 				}
 				return nil
 			}(),
@@ -2265,7 +2692,7 @@ func (r *LXMRouter) CompileStats() map[any]any {
 				"offered":   peer.Offered,
 				"outgoing":  peer.Outgoing,
 				"incoming":  peer.Incoming,
-				"unhandled": peer.UnhandledMessageCount(),
+				"unhandled": len(peer.UnhandledMessages()),
 			},
 		}
 	}
@@ -2278,7 +2705,7 @@ func (r *LXMRouter) CompileStats() map[any]any {
 	nodeStats := map[any]any{
 		"identity_hash":          r.Identity.Hash,
 		"destination_hash":       r.PropagationDestination.Hash,
-		"uptime":                 nowSeconds() - r.PropagationNodeStartTime,
+		"uptime":                 float64(time.Now().UnixNano())/1e9 - r.PropagationNodeStartTime,
 		"delivery_limit":         r.DeliveryPerTransferLimit,
 		"propagation_limit":      r.PropagationPerTransferLimit,
 		"sync_limit":             r.PropagationPerSyncLimit,
@@ -2330,7 +2757,16 @@ func (r *LXMRouter) PeerSyncRequest(_ string, data any, _ []byte, _ []byte, remo
 	if !r.controlAllowed(remoteIdentity) {
 		return PeerErrorNoAccess
 	}
-	hash := toBytes(data)
+	hash := func() []byte {
+		switch t := data.(type) {
+		case []byte:
+			return append([]byte(nil), t...)
+		case string:
+			return []byte(t)
+		default:
+			return nil
+		}
+	}()
 	if len(hash) != rns.ReticulumTruncatedHashLength/8 {
 		return PeerErrorInvalidData
 	}
@@ -2505,7 +2941,39 @@ func (r *LXMRouter) PropagationPacket(data []byte, packet *rns.Packet) {
 	if len(unpacked) < 2 {
 		panic(fmt.Errorf("invalid LXMF propagation packet"))
 	}
-	messages := decodeIDList(unpacked[1])
+	messages := func(v any) [][]byte {
+		list, ok := v.([]any)
+		if !ok {
+			return nil
+		}
+		out := make([][]byte, 0, len(list))
+		for _, entry := range list {
+			switch ids := entry.(type) {
+			case []byte:
+				if len(ids) > 0 {
+					out = append(out, append([]byte(nil), ids...))
+				}
+			case string:
+				if ids != "" {
+					out = append(out, []byte(ids))
+				}
+			default:
+				if id := func() []byte {
+					switch t := entry.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}(); len(id) > 0 {
+					out = append(out, id)
+				}
+			}
+		}
+		return out
+	}(unpacked[1])
 	if len(messages) == 0 {
 		return
 	}
@@ -2519,9 +2987,40 @@ func (r *LXMRouter) PropagationPacket(data []byte, packet *rns.Packet) {
 		if len(entry) < 4 {
 			continue
 		}
-		lxmfData := toBytes(entry[1])
-		stampValue := int(floatFromAny(entry[2]))
-		stampData := toBytes(entry[3])
+		lxmfData := func() []byte {
+			switch t := entry[1].(type) {
+			case []byte:
+				return append([]byte(nil), t...)
+			case string:
+				return []byte(t)
+			default:
+				return nil
+			}
+		}()
+		stampValue := int(func() float64 {
+			switch t := entry[2].(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}())
+		stampData := func() []byte {
+			switch t := entry[3].(type) {
+			case []byte:
+				return append([]byte(nil), t...)
+			case string:
+				return []byte(t)
+			default:
+				return nil
+			}
+		}()
 		r.LXMPropagation(lxmfData, nil, stampValue, stampData, nil, nil, false, false)
 		r.ClientPropagationMessagesReceived++
 	}
@@ -2575,7 +3074,35 @@ func (r *LXMRouter) PropagationResourceConcluded(res *rns.Resource) {
 		rns.Log("Invalid data structure received at propagation destination, ignoring", rns.LOG_DEBUG)
 		return
 	}
-	messages := decodeIDList(messagesData)
+	messages := func(list []any) [][]byte {
+		out := make([][]byte, 0, len(list))
+		for _, entry := range list {
+			switch ids := entry.(type) {
+			case []byte:
+				if len(ids) > 0 {
+					out = append(out, append([]byte(nil), ids...))
+				}
+			case string:
+				if ids != "" {
+					out = append(out, []byte(ids))
+				}
+			default:
+				if id := func() []byte {
+					switch t := entry.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}(); len(id) > 0 {
+					out = append(out, id)
+				}
+			}
+		}
+		return out
+	}(messagesData)
 	if len(messages) == 0 {
 		return
 	}
@@ -2600,14 +3127,116 @@ func (r *LXMRouter) PropagationResourceConcluded(res *rns.Resource) {
 					var pnConfig []any
 					if err := umsgpack.Unpackb(remoteAppData, &pnConfig); err == nil && len(pnConfig) > 6 {
 						if propagationEnabled, ok := pnConfig[2].(bool); ok && propagationEnabled && r.AutoPeer && rns.HopsTo(remoteHash) <= r.AutoPeerMaxDepth {
-							nodeTimebase, _ := asInt(pnConfig[1])
-							propagationLimit := int(floatFromAny(pnConfig[3]))
-							syncLimit := int(floatFromAny(pnConfig[4]))
+							nodeTimebase, _ := func() (int, bool) {
+								switch t := pnConfig[1].(type) {
+								case int:
+									return t, true
+								case *int:
+									if t == nil {
+										return 0, false
+									}
+									return *t, true
+								case int8:
+									return int(t), true
+								case int16:
+									return int(t), true
+								case int32:
+									return int(t), true
+								case int64:
+									return int(t), true
+								case uint:
+									return int(t), true
+								case uint8:
+									return int(t), true
+								case uint16:
+									return int(t), true
+								case uint32:
+									return int(t), true
+								case uint64:
+									return int(t), true
+								case float64:
+									return int(t), true
+								case bool:
+									if t {
+										return 1, true
+									}
+									return 0, true
+								default:
+									return 0, false
+								}
+							}()
+							propagationLimit := int(func() float64 {
+								switch t := pnConfig[3].(type) {
+								case float64:
+									return t
+								case int:
+									return float64(t)
+								case int64:
+									return float64(t)
+								case uint64:
+									return float64(t)
+								default:
+									return 0
+								}
+							}())
+							syncLimit := int(func() float64 {
+								switch t := pnConfig[4].(type) {
+								case float64:
+									return t
+								case int:
+									return float64(t)
+								case int64:
+									return float64(t)
+								case uint64:
+									return float64(t)
+								default:
+									return 0
+								}
+							}())
 							stampCosts, _ := pnConfig[5].([]any)
 							if len(stampCosts) >= 3 {
-								propagationCost := int(floatFromAny(stampCosts[0]))
-								propagationFlex := int(floatFromAny(stampCosts[1]))
-								peeringCost := int(floatFromAny(stampCosts[2]))
+								propagationCost := int(func() float64 {
+									switch t := stampCosts[0].(type) {
+									case float64:
+										return t
+									case int:
+										return float64(t)
+									case int64:
+										return float64(t)
+									case uint64:
+										return float64(t)
+									default:
+										return 0
+									}
+								}())
+								propagationFlex := int(func() float64 {
+									switch t := stampCosts[1].(type) {
+									case float64:
+										return t
+									case int:
+										return float64(t)
+									case int64:
+										return float64(t)
+									case uint64:
+										return float64(t)
+									default:
+										return 0
+									}
+								}())
+								peeringCost := int(func() float64 {
+									switch t := stampCosts[2].(type) {
+									case float64:
+										return t
+									case int:
+										return float64(t)
+									case int64:
+										return float64(t)
+									case uint64:
+										return float64(t)
+									default:
+										return 0
+									}
+								}())
 								metadata, _ := pnConfig[6].(map[any]any)
 								rns.Log("Auto-peering with "+remoteStr+" discovered via incoming sync", rns.LOG_DEBUG)
 								r.Peer(remoteHash, nodeTimebase, propagationLimit, syncLimit, propagationCost, propagationFlex, peeringCost, metadata)
@@ -2660,10 +3289,50 @@ func (r *LXMRouter) PropagationResourceConcluded(res *rns.Resource) {
 		if len(entry) < 4 {
 			continue
 		}
-		transientID := toBytes(entry[0])
-		lxmfData := toBytes(entry[1])
-		stampValue := int(floatFromAny(entry[2]))
-		stampData := toBytes(entry[3])
+		transientID := func() []byte {
+			switch t := entry[0].(type) {
+			case []byte:
+				return append([]byte(nil), t...)
+			case string:
+				return []byte(t)
+			default:
+				return nil
+			}
+		}()
+		lxmfData := func() []byte {
+			switch t := entry[1].(type) {
+			case []byte:
+				return append([]byte(nil), t...)
+			case string:
+				return []byte(t)
+			default:
+				return nil
+			}
+		}()
+		stampValue := int(func() float64 {
+			switch t := entry[2].(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}())
+		stampData := func() []byte {
+			switch t := entry[3].(type) {
+			case []byte:
+				return append([]byte(nil), t...)
+			case string:
+				return []byte(t)
+			default:
+				return nil
+			}
+		}()
 
 		if peer != nil {
 			peer.Incoming++
@@ -2685,7 +3354,7 @@ func (r *LXMRouter) PropagationResourceConcluded(res *rns.Resource) {
 		link.Teardown()
 		if remoteHash != nil {
 			throttleTime := float64(PNStampThrottle)
-			r.ThrottledPeers[string(remoteHash)] = nowSeconds() + throttleTime
+			r.ThrottledPeers[string(remoteHash)] = float64(time.Now().UnixNano())/1e9 + throttleTime
 			ms := "s"
 			if invalidStamps == 1 {
 				ms = ""
@@ -2719,7 +3388,7 @@ func (r *LXMRouter) OfferRequest(_ string, data any, _ []byte, linkID []byte, re
 	remoteStr := rns.PrettyHexRep(remoteHash)
 
 	if until, ok := r.ThrottledPeers[string(remoteHash)]; ok {
-		now := nowSeconds()
+		now := float64(time.Now().UnixNano()) / 1e9
 		if now < until {
 			remaining := until - now
 			rns.Log("Propagation offer from node "+remoteStr+" rejected, throttled for "+rns.PrettyTime(remaining, false, false)+" more", rns.LOG_NOTICE)
@@ -2738,7 +3407,7 @@ func (r *LXMRouter) OfferRequest(_ string, data any, _ []byte, linkID []byte, re
 		panic(fmt.Errorf("invalid sync offer data"))
 	}
 
-	peeringID := append(copyBytes(r.Identity.Hash), remoteIdentity.Hash...)
+	peeringID := append(append([]byte(nil), r.Identity.Hash...), remoteIdentity.Hash...)
 	targetCost := r.PeeringCost
 	peeringKey, ok := list[0].([]byte)
 	if !ok {
@@ -2748,7 +3417,35 @@ func (r *LXMRouter) OfferRequest(_ string, data any, _ []byte, linkID []byte, re
 	if !ok {
 		panic(fmt.Errorf("invalid transient ids type"))
 	}
-	transientIDs := decodeIDList(transientList)
+	transientIDs := func(list []any) [][]byte {
+		out := make([][]byte, 0, len(list))
+		for _, entry := range list {
+			switch ids := entry.(type) {
+			case []byte:
+				if len(ids) > 0 {
+					out = append(out, append([]byte(nil), ids...))
+				}
+			case string:
+				if ids != "" {
+					out = append(out, []byte(ids))
+				}
+			default:
+				if id := func() []byte {
+					switch t := entry.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}(); len(id) > 0 {
+					out = append(out, id)
+				}
+			}
+		}
+		return out
+	}(transientList)
 	start := time.Now()
 	peeringKeyValid := ValidatePeeringKey(peeringID, peeringKey, targetCost)
 	duration := time.Since(start).Seconds()
@@ -2820,7 +3517,7 @@ func (r *LXMRouter) MessageGetRequest(_ string, data any, _ []byte, _ []byte, re
 			if entry == nil {
 				continue
 			}
-			if !bytesEqual(entry.DestinationHash, remoteDest.Hash) {
+			if !bytes.Equal(entry.DestinationHash, remoteDest.Hash) {
 				continue
 			}
 			info, err := os.Stat(entry.FilePath)
@@ -2841,12 +3538,47 @@ func (r *LXMRouter) MessageGetRequest(_ string, data any, _ []byte, _ []byte, re
 	}
 
 	if haveField != nil {
-		for _, transientID := range decodeIDList(haveField) {
+		for _, transientID := range func(v any) [][]byte {
+			if v == nil {
+				return nil
+			}
+			list, ok := v.([]any)
+			if !ok {
+				return nil
+			}
+			out := make([][]byte, 0, len(list))
+			for _, entry := range list {
+				switch ids := entry.(type) {
+				case []byte:
+					if len(ids) > 0 {
+						out = append(out, append([]byte(nil), ids...))
+					}
+				case string:
+					if ids != "" {
+						out = append(out, []byte(ids))
+					}
+				default:
+					if id := func() []byte {
+						switch t := entry.(type) {
+						case []byte:
+							return append([]byte(nil), t...)
+						case string:
+							return []byte(t)
+						default:
+							return nil
+						}
+					}(); len(id) > 0 {
+						out = append(out, id)
+					}
+				}
+			}
+			return out
+		}(haveField) {
 			entry, ok := r.PropagationEntries[string(transientID)]
 			if !ok || entry == nil {
 				continue
 			}
-			if !bytesEqual(entry.DestinationHash, remoteDest.Hash) {
+			if !bytes.Equal(entry.DestinationHash, remoteDest.Hash) {
 				continue
 			}
 			filePath := entry.FilePath
@@ -2867,19 +3599,67 @@ func (r *LXMRouter) MessageGetRequest(_ string, data any, _ []byte, _ []byte, re
 	if wantField != nil {
 		var clientTransferLimit *float64
 		if len(list) >= 3 {
-			limit := floatFromAny(list[2]) * 1000
+			limit := func() float64 {
+				switch t := list[2].(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}() * 1000
 			clientTransferLimit = &limit
 			rns.Log("Client indicates transfer limit of "+rns.PrettySize(limit), rns.LOG_DEBUG)
 		}
 
 		perMessageOverhead := int64(16)
 		cumulativeSize := int64(24)
-		for _, transientID := range decodeIDList(wantField) {
+		for _, transientID := range func(v any) [][]byte {
+			if v == nil {
+				return nil
+			}
+			list, ok := v.([]any)
+			if !ok {
+				return nil
+			}
+			out := make([][]byte, 0, len(list))
+			for _, entry := range list {
+				switch ids := entry.(type) {
+				case []byte:
+					if len(ids) > 0 {
+						out = append(out, append([]byte(nil), ids...))
+					}
+				case string:
+					if ids != "" {
+						out = append(out, []byte(ids))
+					}
+				default:
+					if id := func() []byte {
+						switch t := entry.(type) {
+						case []byte:
+							return append([]byte(nil), t...)
+						case string:
+							return []byte(t)
+						default:
+							return nil
+						}
+					}(); len(id) > 0 {
+						out = append(out, id)
+					}
+				}
+			}
+			return out
+		}(wantField) {
 			entry, ok := r.PropagationEntries[string(transientID)]
 			if !ok || entry == nil {
 				continue
 			}
-			if !bytesEqual(entry.DestinationHash, remoteDest.Hash) {
+			if !bytes.Equal(entry.DestinationHash, remoteDest.Hash) {
 				continue
 			}
 			data, err := os.ReadFile(entry.FilePath)
@@ -2908,10 +3688,10 @@ func (r *LXMRouter) MessageGetRequest(_ string, data any, _ []byte, _ []byte, re
 func (r *LXMRouter) EnqueuePeerDistribution(transientID []byte, fromPeer *LXMPeer) {
 	var fromHash []byte
 	if fromPeer != nil {
-		fromHash = copyBytes(fromPeer.DestinationHash)
+		fromHash = append([]byte(nil), fromPeer.DestinationHash...)
 	}
 	r.PeerDistributionQueue = append(r.PeerDistributionQueue, peerDistributionEntry{
-		TransientID: copyBytes(transientID),
+		TransientID: append([]byte(nil), transientID...),
 		FromPeer:    fromHash,
 	})
 }
@@ -2933,7 +3713,7 @@ func (r *LXMRouter) FlushPeerDistributionQueue() {
 
 	for _, peer := range peers {
 		for _, entry := range entries {
-			if bytesEqual(peer.DestinationHash, entry.FromPeer) {
+			if bytes.Equal(peer.DestinationHash, entry.FromPeer) {
 				continue
 			}
 			peer.QueueUnhandledMessage(entry.TransientID)
@@ -2970,7 +3750,7 @@ func (r *LXMRouter) LXMPropagation(lxmfData []byte, fromPeer *LXMPeer, stampValu
 		}
 	}
 
-	received := nowSeconds()
+	received := float64(time.Now().UnixNano()) / 1e9
 	r.LocallyProcessed[string(transientID)] = received
 
 	destinationHash := lxmfData[:DestinationLength]
@@ -2982,7 +3762,7 @@ func (r *LXMRouter) LXMPropagation(lxmfData []byte, fromPeer *LXMPeer, stampValu
 			noStampEnforcement := isPaperMessage
 			ratchetID := dest.LatestRatchetID
 			r.LXMDelivery(deliveryData, dest.Type, nil, ratchetID, MethodPropagated, noStampEnforcement, allowDuplicate)
-			r.LocallyDelivered[string(transientID)] = nowSeconds()
+			r.LocallyDelivered[string(transientID)] = float64(time.Now().UnixNano()) / 1e9
 			if signalLocalDelivery != nil {
 				return signalLocalDelivery, false
 			}
@@ -3008,7 +3788,7 @@ func (r *LXMRouter) LXMPropagation(lxmfData []byte, fromPeer *LXMPeer, stampValu
 
 	rns.Log("Received propagated LXMF message "+rns.PrettyHexRep(transientID)+" with stamp value "+fmt.Sprintf("%d", stampValue)+", adding to peer distribution queues...", rns.LOG_EXTREME)
 	r.PropagationEntries[string(transientID)] = &propagationEntry{
-		DestinationHash: copyBytes(destinationHash),
+		DestinationHash: append([]byte(nil), destinationHash...),
 		FilePath:        filePath,
 		Received:        received,
 		Size:            int64(len(stampedData)),
@@ -3024,7 +3804,7 @@ func (r *LXMRouter) LXMPropagation(lxmfData []byte, fromPeer *LXMPeer, stampValu
 
 func (r *LXMRouter) CleanMessageStore() {
 	rns.Log("Cleaning message store", rns.LOG_VERBOSE)
-	now := nowSeconds()
+	now := float64(time.Now().UnixNano()) / 1e9
 	removedEntries := map[string]string{}
 
 	for transientKey, entry := range r.PropagationEntries {
@@ -3142,7 +3922,7 @@ func (r *LXMRouter) SyncPeers() {
 	waitingPeers := make([]*LXMPeer, 0)
 	unresponsivePeers := make([]*LXMPeer, 0)
 
-	now := nowSeconds()
+	now := float64(time.Now().UnixNano()) / 1e9
 	peers := make(map[string]*LXMPeer, len(r.Peers))
 	for k, v := range r.Peers {
 		peers[k] = v
@@ -3159,7 +3939,7 @@ func (r *LXMRouter) SyncPeers() {
 			continue
 		}
 
-		if peer.State == PeerIdle && peer.UnhandledMessageCount() > 0 {
+		if peer.State == PeerIdle && len(peer.UnhandledMessages()) > 0 {
 			if peer.Alive {
 				waitingPeers = append(waitingPeers, peer)
 			} else if now > peer.NextSyncAttempt {
@@ -3173,7 +3953,10 @@ func (r *LXMRouter) SyncPeers() {
 		sort.Slice(waitingPeers, func(i, j int) bool {
 			return waitingPeers[i].SyncTransferRate > waitingPeers[j].SyncTransferRate
 		})
-		fastestCount := minInt(FastestNRandomPool, len(waitingPeers))
+		fastestCount := FastestNRandomPool
+		if len(waitingPeers) < fastestCount {
+			fastestCount = len(waitingPeers)
+		}
 		peerPool = append(peerPool, waitingPeers[:fastestCount]...)
 
 		unknownSpeed := make([]*LXMPeer, 0)
@@ -3183,7 +3966,10 @@ func (r *LXMRouter) SyncPeers() {
 			}
 		}
 		if len(unknownSpeed) > 0 {
-			unknownCount := minInt(len(unknownSpeed), fastestCount)
+			unknownCount := fastestCount
+			if len(unknownSpeed) < unknownCount {
+				unknownCount = len(unknownSpeed)
+			}
 			peerPool = append(peerPool, unknownSpeed[:unknownCount]...)
 		}
 		rns.Log("Selecting peer to sync from "+fmt.Sprintf("%d", len(waitingPeers))+" waiting peers.", rns.LOG_DEBUG)
@@ -3216,7 +4002,7 @@ func (r *LXMRouter) SyncPeers() {
 }
 
 func (r *LXMRouter) CleanThrottledPeers() {
-	now := nowSeconds()
+	now := float64(time.Now().UnixNano()) / 1e9
 	for peerHash, until := range r.ThrottledPeers {
 		if now > until {
 			delete(r.ThrottledPeers, peerHash)
@@ -3291,7 +4077,7 @@ func (r *LXMRouter) RotatePeers() {
 		if !ok || peer == nil {
 			continue
 		}
-		if peer.UnhandledMessageCount() == 0 {
+		if len(peer.UnhandledMessages()) == 0 {
 			fullySynced = append(fullySynced, peerID)
 		}
 	}
@@ -3340,7 +4126,10 @@ func (r *LXMRouter) RotatePeers() {
 		return
 	}
 
-	dropCount := minInt(requiredDrops, len(dropPool))
+	dropCount := requiredDrops
+	if len(dropPool) < dropCount {
+		dropCount = len(dropPool)
+	}
 	sort.SliceStable(dropPool, func(i, j int) bool {
 		return dropPool[i].AcceptanceRate() < dropPool[j].AcceptanceRate()
 	})
@@ -3356,7 +4145,7 @@ func (r *LXMRouter) RotatePeers() {
 			if !peer.Alive {
 				reachableStr = "unreachable"
 			}
-			rns.Log("Acceptance rate for "+reachableStr+" peer "+rns.PrettyHexRep(peer.DestinationHash)+" was: "+fmt.Sprintf("%.2f", ar)+"% ("+fmt.Sprintf("%d", peer.Outgoing)+"/"+fmt.Sprintf("%d", peer.Offered)+", "+fmt.Sprintf("%d", peer.UnhandledMessageCount())+" unhandled messages)", rns.LOG_DEBUG)
+			rns.Log("Acceptance rate for "+reachableStr+" peer "+rns.PrettyHexRep(peer.DestinationHash)+" was: "+fmt.Sprintf("%.2f", ar)+"% ("+fmt.Sprintf("%d", peer.Outgoing)+"/"+fmt.Sprintf("%d", peer.Offered)+", "+fmt.Sprintf("%d", len(peer.UnhandledMessages()))+" unhandled messages)", rns.LOG_DEBUG)
 			r.Unpeer(peer.DestinationHash, nil)
 			droppedPeers++
 		}
@@ -3439,7 +4228,7 @@ func (r *LXMRouter) getOrCreatePropagationLink() *rns.Link {
 }
 
 func (r *LXMRouter) GenerateTicket(destinationHash []byte, expiry int) []any {
-	nowFloat := nowSeconds()
+	nowFloat := float64(time.Now().UnixNano()) / 1e9
 	if last, ok := r.AvailableTickets.LastDeliveries[string(destinationHash)]; ok {
 		elapsed := nowFloat - last
 		if elapsed < float64(TicketInterval) {
@@ -3476,9 +4265,22 @@ func (r *LXMRouter) GenerateTicket(destinationHash []byte, expiry int) []any {
 }
 
 func (r *LXMRouter) RememberTicket(destinationHash []byte, entry []any) {
-	expires := floatFromAny(entry[0])
+	expires := func() float64 {
+		switch t := entry[0].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}()
 	ticket := entry[1].([]byte)
-	rns.Log("Remembering ticket for "+rns.PrettyHexRep(destinationHash)+", expires in "+rns.PrettyTime(expires-nowSeconds(), false, true), rns.LOG_DEBUG)
+	rns.Log("Remembering ticket for "+rns.PrettyHexRep(destinationHash)+", expires in "+rns.PrettyTime(expires-float64(time.Now().UnixNano())/1e9, false, true), rns.LOG_DEBUG)
 	r.AvailableTickets.Outbound[string(destinationHash)] = ticketEntry{
 		Expires: expires,
 		Ticket:  ticket,
@@ -3487,7 +4289,7 @@ func (r *LXMRouter) RememberTicket(destinationHash []byte, entry []any) {
 
 func (r *LXMRouter) GetOutboundTicket(destinationHash []byte) []byte {
 	if entry, ok := r.AvailableTickets.Outbound[string(destinationHash)]; ok {
-		if entry.Expires > nowSeconds() {
+		if entry.Expires > float64(time.Now().UnixNano())/1e9 {
 			return entry.Ticket
 		}
 	}
@@ -3496,7 +4298,7 @@ func (r *LXMRouter) GetOutboundTicket(destinationHash []byte) []byte {
 
 func (r *LXMRouter) GetOutboundTicketExpiry(destinationHash []byte) *float64 {
 	if entry, ok := r.AvailableTickets.Outbound[string(destinationHash)]; ok {
-		if entry.Expires > nowSeconds() {
+		if entry.Expires > float64(time.Now().UnixNano())/1e9 {
 			expires := entry.Expires
 			return &expires
 		}
@@ -3505,7 +4307,7 @@ func (r *LXMRouter) GetOutboundTicketExpiry(destinationHash []byte) *float64 {
 }
 
 func (r *LXMRouter) GetInboundTickets(destinationHash []byte) [][]byte {
-	now := nowSeconds()
+	now := float64(time.Now().UnixNano()) / 1e9
 	tickets := [][]byte{}
 	if inbound, ok := r.AvailableTickets.Inbound[string(destinationHash)]; ok {
 		for _, key := range r.AvailableTickets.InboundOrder[string(destinationHash)] {
@@ -3623,7 +4425,20 @@ func (r *LXMRouter) cleanOutboundStampCosts() {
 	expired := []string{}
 	for destinationHash := range r.OutboundStampCosts {
 		entry := r.OutboundStampCosts[destinationHash]
-		if nowSeconds() > floatFromAny(entry[0])+StampCostExpiry {
+		if float64(time.Now().UnixNano())/1e9 > func() float64 {
+			switch t := entry[0].(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}()+StampCostExpiry {
 			expired = append(expired, destinationHash)
 		}
 	}
@@ -3682,11 +4497,42 @@ func (r *LXMRouter) loadAvailableTickets() {
 	if v, ok := rawMap["outbound"]; ok {
 		if outboundRaw, ok := v.(map[any]any); ok {
 			for k, entryRaw := range outboundRaw {
-				ks := string(toBytes(k))
+				ks := string(func() []byte {
+					switch t := k.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}())
 				if entry, ok := entryRaw.([]any); ok && len(entry) >= 2 {
 					r.AvailableTickets.Outbound[ks] = ticketEntry{
-						Expires: floatFromAny(entry[0]),
-						Ticket:  toBytes(entry[1]),
+						Expires: func() float64 {
+							switch t := entry[0].(type) {
+							case float64:
+								return t
+							case int:
+								return float64(t)
+							case int64:
+								return float64(t)
+							case uint64:
+								return float64(t)
+							default:
+								return 0
+							}
+						}(),
+						Ticket: func() []byte {
+							switch t := entry[1].(type) {
+							case []byte:
+								return append([]byte(nil), t...)
+							case string:
+								return []byte(t)
+							default:
+								return nil
+							}
+						}(),
 					}
 				}
 			}
@@ -3695,14 +4541,45 @@ func (r *LXMRouter) loadAvailableTickets() {
 	if v, ok := rawMap["inbound"]; ok {
 		if inboundRaw, ok := v.(map[any]any); ok {
 			for k, entryRaw := range inboundRaw {
-				dest := string(toBytes(k))
+				dest := string(func() []byte {
+					switch t := k.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}())
 				tickets := map[string]ticketEntry{}
 				if entryMap, ok := entryRaw.(map[any]any); ok {
 					for tk, te := range entryMap {
-						ticketKey := string(toBytes(tk))
+						ticketKey := string(func() []byte {
+							switch t := tk.(type) {
+							case []byte:
+								return append([]byte(nil), t...)
+							case string:
+								return []byte(t)
+							default:
+								return nil
+							}
+						}())
 						if entry, ok := te.([]any); ok && len(entry) >= 1 {
 							tickets[ticketKey] = ticketEntry{
-								Expires: floatFromAny(entry[0]),
+								Expires: func() float64 {
+									switch t := entry[0].(type) {
+									case float64:
+										return t
+									case int:
+										return float64(t)
+									case int64:
+										return float64(t)
+									case uint64:
+										return float64(t)
+									default:
+										return 0
+									}
+								}(),
 							}
 						}
 					}
@@ -3714,11 +4591,29 @@ func (r *LXMRouter) loadAvailableTickets() {
 	if v, ok := rawMap["inbound_order"]; ok {
 		if orderRaw, ok := v.(map[any]any); ok {
 			for k, entryRaw := range orderRaw {
-				dest := string(toBytes(k))
+				dest := string(func() []byte {
+					switch t := k.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}())
 				order := []string{}
 				if list, ok := entryRaw.([]any); ok {
 					for _, item := range list {
-						key := string(toBytes(item))
+						key := string(func() []byte {
+							switch t := item.(type) {
+							case []byte:
+								return append([]byte(nil), t...)
+							case string:
+								return []byte(t)
+							default:
+								return nil
+							}
+						}())
 						if key != "" {
 							order = append(order, key)
 						}
@@ -3731,8 +4626,30 @@ func (r *LXMRouter) loadAvailableTickets() {
 	if v, ok := rawMap["last_deliveries"]; ok {
 		if lastRaw, ok := v.(map[any]any); ok {
 			for k, val := range lastRaw {
-				key := string(toBytes(k))
-				r.AvailableTickets.LastDeliveries[key] = floatFromAny(val)
+				key := string(func() []byte {
+					switch t := k.(type) {
+					case []byte:
+						return append([]byte(nil), t...)
+					case string:
+						return []byte(t)
+					default:
+						return nil
+					}
+				}())
+				r.AvailableTickets.LastDeliveries[key] = func() float64 {
+					switch t := val.(type) {
+					case float64:
+						return t
+					case int:
+						return float64(t)
+					case int64:
+						return float64(t)
+					case uint64:
+						return float64(t)
+					default:
+						return 0
+					}
+				}()
 			}
 		}
 	}
@@ -3771,7 +4688,7 @@ func (r *LXMRouter) cleanAvailableTickets() {
 		}
 	}()
 
-	now := nowSeconds()
+	now := float64(time.Now().UnixNano()) / 1e9
 
 	expiredOutbound := []string{}
 	for dest, entry := range r.AvailableTickets.Outbound {
@@ -3847,10 +4764,375 @@ func (r *LXMRouter) loadPeers() error {
 		if !ok {
 			continue
 		}
-		peer, err := LXMPeerFromBytes(rawPeer, r)
-		if err != nil || peer == nil {
+		var dict map[any]any
+		if err := umsgpack.Unpackb(rawPeer, &dict); err != nil {
 			continue
 		}
+		rawHash := func() []byte {
+			switch t := dict["destination_hash"].(type) {
+			case []byte:
+				return append([]byte(nil), t...)
+			case string:
+				return []byte(t)
+			default:
+				return nil
+			}
+		}()
+		peer := NewLXMPeer(r, rawHash, PeerDefaultSyncStrategy)
+
+		peer.PeeringTimebase = func() float64 {
+			switch t := dict["peering_timebase"].(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}()
+		if alive, ok := dict["alive"].(bool); ok {
+			peer.Alive = alive
+		}
+		peer.LastHeard = func() float64 {
+			switch t := dict["last_heard"].(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}()
+		peer.LinkEstablishmentRate = func() float64 {
+			switch t := dict["link_establishment_rate"].(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}()
+		peer.SyncTransferRate = func() float64 {
+			switch t := dict["sync_transfer_rate"].(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}()
+		if v, ok := dict["propagation_transfer_limit"]; ok {
+			peer.PropagationTransferLimit = func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}()
+		}
+		if v, ok := dict["propagation_sync_limit"]; ok {
+			peer.PropagationSyncLimit = func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}()
+		} else {
+			peer.PropagationSyncLimit = peer.PropagationTransferLimit
+		}
+		if v, ok := dict["propagation_stamp_cost"]; ok {
+			peer.PropagationStampCost = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["propagation_stamp_cost_flexibility"]; ok {
+			peer.PropagationStampCostFlexibility = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["peering_cost"]; ok {
+			peer.PeeringCost = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["sync_strategy"]; ok {
+			peer.SyncStrategy = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["offered"]; ok {
+			peer.Offered = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["outgoing"]; ok {
+			peer.Outgoing = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["incoming"]; ok {
+			peer.Incoming = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["rx_bytes"]; ok {
+			peer.RxBytes = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["tx_bytes"]; ok {
+			peer.TxBytes = int(func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}())
+		}
+		if v, ok := dict["last_sync_attempt"]; ok {
+			peer.LastSyncAttempt = func() float64 {
+				switch t := v.(type) {
+				case float64:
+					return t
+				case int:
+					return float64(t)
+				case int64:
+					return float64(t)
+				case uint64:
+					return float64(t)
+				default:
+					return 0
+				}
+			}()
+		}
+		if v, ok := dict["peering_key"]; ok {
+			if key, ok := v.([]any); ok {
+				peer.PeeringKey = key
+			}
+		}
+		if meta, ok := dict["metadata"].(map[any]any); ok {
+			peer.Metadata = meta
+		}
+
+		hmCount := 0
+		for _, id := range func(v any) [][]byte {
+			if v == nil {
+				return nil
+			}
+			list, ok := v.([]any)
+			if !ok {
+				return nil
+			}
+			out := make([][]byte, 0, len(list))
+			for _, entry := range list {
+				switch ids := entry.(type) {
+				case []byte:
+					if len(ids) > 0 {
+						out = append(out, append([]byte(nil), ids...))
+					}
+				case string:
+					if ids != "" {
+						out = append(out, []byte(ids))
+					}
+				default:
+					if id := func() []byte {
+						switch t := entry.(type) {
+						case []byte:
+							return append([]byte(nil), t...)
+						case string:
+							return []byte(t)
+						default:
+							return nil
+						}
+					}(); len(id) > 0 {
+						out = append(out, id)
+					}
+				}
+			}
+			return out
+		}(dict["handled_ids"]) {
+			if _, ok := r.PropagationEntries[string(id)]; ok {
+				peer.AddHandledMessage(id)
+				hmCount++
+			}
+		}
+
+		umCount := 0
+		for _, id := range func(v any) [][]byte {
+			if v == nil {
+				return nil
+			}
+			list, ok := v.([]any)
+			if !ok {
+				return nil
+			}
+			out := make([][]byte, 0, len(list))
+			for _, entry := range list {
+				switch ids := entry.(type) {
+				case []byte:
+					if len(ids) > 0 {
+						out = append(out, append([]byte(nil), ids...))
+					}
+				case string:
+					if ids != "" {
+						out = append(out, []byte(ids))
+					}
+				default:
+					if id := func() []byte {
+						switch t := entry.(type) {
+						case []byte:
+							return append([]byte(nil), t...)
+						case string:
+							return []byte(t)
+						default:
+							return nil
+						}
+					}(); len(id) > 0 {
+						out = append(out, id)
+					}
+				}
+			}
+			return out
+		}(dict["unhandled_ids"]) {
+			if _, ok := r.PropagationEntries[string(id)]; ok {
+				peer.AddUnhandledMessage(id)
+				umCount++
+			}
+		}
+
+		peer.hmCount = hmCount
+		peer.umCount = umCount
+		peer.hmCountsSynced = true
+		peer.umCountsSynced = true
+
 		if r.StaticPeer(peer.DestinationHash) && peer.LastHeard == 0 {
 			rns.RequestPath(peer.DestinationHash, nil, nil, false)
 		}
@@ -3861,7 +5143,7 @@ func (r *LXMRouter) loadPeers() error {
 			if peer.PropagationTransferLimit > 0 {
 				limStr = ", " + rns.PrettySize(peer.PropagationTransferLimit*1000) + " transfer limit"
 			}
-			rns.Log("Rebuilt peer "+rns.PrettyHexRep(peer.DestinationHash)+" with "+fmt.Sprintf("%d", peer.UnhandledMessageCount())+" unhandled messages"+limStr, rns.LOG_DEBUG)
+			rns.Log("Rebuilt peer "+rns.PrettyHexRep(peer.DestinationHash)+" with "+fmt.Sprintf("%d", len(peer.UnhandledMessages()))+" unhandled messages"+limStr, rns.LOG_DEBUG)
 		} else {
 			rns.Log("Peer "+rns.PrettyHexRep(peer.DestinationHash)+" could not be loaded, because its identity could not be recalled. Dropping peer.", rns.LOG_DEBUG)
 		}
@@ -3889,10 +5171,62 @@ func (r *LXMRouter) loadNodeStats() {
 		return
 	}
 
-	r.ClientPropagationMessagesReceived = int(floatFromAny(nodeStats["client_propagation_messages_received"]))
-	r.ClientPropagationMessagesServed = int(floatFromAny(nodeStats["client_propagation_messages_served"]))
-	r.UnpeeredPropagationIncoming = int(floatFromAny(nodeStats["unpeered_propagation_incoming"]))
-	r.UnpeeredPropagationRxBytes = int(floatFromAny(nodeStats["unpeered_propagation_rx_bytes"]))
+	r.ClientPropagationMessagesReceived = int(func() float64 {
+		switch t := nodeStats["client_propagation_messages_received"].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}())
+	r.ClientPropagationMessagesServed = int(func() float64 {
+		switch t := nodeStats["client_propagation_messages_served"].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}())
+	r.UnpeeredPropagationIncoming = int(func() float64 {
+		switch t := nodeStats["unpeered_propagation_incoming"].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}())
+	r.UnpeeredPropagationRxBytes = int(func() float64 {
+		switch t := nodeStats["unpeered_propagation_rx_bytes"].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}())
 }
 
 func (r *LXMRouter) saveNodeStats() {
@@ -4031,7 +5365,7 @@ func (r *LXMRouter) indexMessageStore() error {
 		_ = file.Close()
 
 		r.PropagationEntries[string(transientID)] = &propagationEntry{
-			DestinationHash: copyBytes(destHash),
+			DestinationHash: append([]byte(nil), destHash...),
 			FilePath:        filePath,
 			Received:        received,
 			Size:            msgSize,
@@ -4048,7 +5382,20 @@ func coerceStringFloatMap(raw map[any]any) map[string]float64 {
 	out := map[string]float64{}
 	for k, v := range raw {
 		ks := fmt.Sprintf("%s", k)
-		out[ks] = floatFromAny(v)
+		out[ks] = func() float64 {
+			switch t := v.(type) {
+			case float64:
+				return t
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case uint64:
+				return float64(t)
+			default:
+				return 0
+			}
+		}()
 	}
 	return out
 }

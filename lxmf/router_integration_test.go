@@ -516,7 +516,20 @@ func TestRouterAnnounceDrivenMessageDeliveryBetweenTwoIdentities(t *testing.T) {
 	}
 	if entry, ok := senderRouter.OutboundStampCosts[string(announceDest.Hash)]; !ok {
 		t.Fatalf("expected sender router to learn receiver delivery announce metadata")
-	} else if len(entry) < 2 || int(floatFromAny(entry[1])) != stampCost {
+	} else if len(entry) < 2 || int(func() float64 {
+		switch t := entry[1].(type) {
+		case float64:
+			return t
+		case int:
+			return float64(t)
+		case int64:
+			return float64(t)
+		case uint64:
+			return float64(t)
+		default:
+			return 0
+		}
+	}()) != stampCost {
 		t.Fatalf("expected learned stamp cost %d, got %#v", stampCost, entry)
 	}
 	if recalled := rns.IdentityRecall(announceDest.Hash); recalled == nil {
